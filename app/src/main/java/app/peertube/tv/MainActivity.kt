@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.History
@@ -275,10 +276,10 @@ class HomeModel : ViewModel() {
         gridMode = prefs?.getBoolean("gridMode", true) ?: true
         afterVideoAction = prefs?.getString("afterVideoAction", "finish") ?: "finish"
         playerOverlayDurationSeconds = (prefs?.getInt("playerOverlayDurationSeconds", 3) ?: 3).coerceIn(3, 10).let { if (it == 3 || it == 5 || it == 10) it else 3 }
-        showPlayerClock = prefs?.getBoolean("showPlayerClock", false) ?: false
+        showPlayerClock = prefs?.getBoolean("showPlayerClock", true) ?: true
         playerClockPosition = prefs?.getString("playerClockPosition", "top_right")?.takeIf { it == "top_left" || it == "top_right" } ?: "top_right"
         playerClockSize = prefs?.getString("playerClockSize", "medium")?.takeIf { it == "small" || it == "medium" || it == "large" } ?: "medium"
-        playerClockBackdrop = prefs?.getString("playerClockBackdrop", "medium")?.takeIf { it == "none" || it == "light" || it == "medium" || it == "strong" } ?: "medium"
+        playerClockBackdrop = prefs?.getString("playerClockBackdrop", "none")?.takeIf { it == "none" || it == "light" || it == "medium" || it == "strong" } ?: "none"
         if (prefs?.getBoolean("resumePlaybackDefaultMigrated", false) != true) {
             resumePlayback = true
             prefs?.edit()?.putBoolean("resumePlayback", true)?.putBoolean("resumePlaybackDefaultMigrated", true)?.apply()
@@ -289,23 +290,80 @@ class HomeModel : ViewModel() {
             ?.takeIf { it in setOf("never", "minute", "three_minutes", "half", "complete") } ?: "never"
         watchedVideoIds.clear()
         runCatching { watchedVideoIds.addAll(Gson().fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
-        exitMode = prefs?.getString("exitMode", "none")?.takeIf { it == "none" || it == "single" || it == "double" } ?: "none"
+        val savedExitMode = prefs?.getString("exitMode", null)
+        val exitModeUserSelected = prefs?.getBoolean("exitModeUserSelected", false) ?: false
+        val exitModeDefaultInitialized = prefs?.getBoolean("exitModeDefaultInitialized", false) ?: false
+        exitMode = when {
+            exitModeUserSelected -> savedExitMode?.takeIf { it in setOf("none", "single", "double") }
+                ?: if (isTelevisionDevice(context)) "double" else "none"
+            savedExitMode == "single" || savedExitMode == "double" -> {
+                // Keep a non-default exit mode saved by an older app version.
+                prefs?.edit()?.putBoolean("exitModeUserSelected", true)?.putBoolean("exitModeDefaultInitialized", true)?.apply()
+                savedExitMode
+            }
+            !exitModeDefaultInitialized -> {
+                (if (isTelevisionDevice(context)) "double" else "none").also { defaultMode ->
+                    prefs?.edit()?.putString("exitMode", defaultMode)?.putBoolean("exitModeDefaultInitialized", true)?.apply()
+                }
+            }
+            else -> savedExitMode?.takeIf { it in setOf("none", "single", "double") } ?: "none"
+        }
         videoTitleLines = (prefs?.getInt("videoTitleLines", 2) ?: 2).coerceIn(1, 3)
         tickerSpeed = (prefs?.getFloat("tickerSpeed", 1f) ?: 1f).coerceIn(1f, 8f)
-        contextMenuHoldSeconds = (prefs?.getFloat("contextMenuHoldSeconds", 2f) ?: 2f).coerceIn(1f, 5f)
+        contextMenuHoldSeconds = (prefs?.getFloat("contextMenuHoldSeconds", 1f) ?: 1f).coerceIn(1f, 5f)
         seekStepSeconds = (prefs?.getInt("seekStepSeconds", 10) ?: 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10
         launchTab = prefs?.getString("launchTab", "home")?.takeIf { it in listOf("home", "popular", "live", "subscriptions", "channels", "recommendations", "instances", "history", "favorites") } ?: "home"
         hiddenSections = runCatching { Gson().fromJson<List<String>>(prefs?.getString("hiddenSections", "[]"), object : TypeToken<List<String>>() {}.type)?.toSet() ?: emptySet() }.getOrDefault(emptySet())
         selectedTheme = prefs?.getString("selectedTheme", "peertube")?.takeIf { it in listOf("peertube", "turquoise", "gray", "red") } ?: "peertube"
         showSearchIcon = prefs?.getBoolean("showSearchIcon", true) ?: true
-        uiScale = (prefs?.getFloat("uiScale", 1f) ?: 1f).coerceIn(0.85f, 1.4f)
-        gridScale = (prefs?.getFloat("gridScale", 1f) ?: 1f).coerceIn(0.5f, 1.5f)
+        uiScale = (prefs?.getFloat("uiScale", 0.85f) ?: 0.85f).coerceIn(0.85f, 1.4f)
+        gridScale = (prefs?.getFloat("gridScale", 0.85f) ?: 0.85f).coerceIn(0.5f, 1.5f)
         clock24Hour = prefs?.getBoolean("clock24Hour", true) ?: true
-        if (prefs?.contains("countryExplicit") == true) {
-            searchCountryCode = prefs?.getString("searchCountryCode", "").orEmpty()
-        } else {
+        if (prefs?.getBoolean("playerDefaults20261021Applied", false) != true) {
+            val editor = prefs?.edit()
+            if (kotlin.math.abs((prefs?.getFloat("contextMenuHoldSeconds", 2f) ?: 2f) - 2f) < 0.001f) {
+                contextMenuHoldSeconds = 1f
+                editor?.putFloat("contextMenuHoldSeconds", 1f)
+            }
+            if (kotlin.math.abs((prefs?.getFloat("uiScale", 1f) ?: 1f) - 1f) < 0.001f) {
+                uiScale = 0.85f
+                editor?.putFloat("uiScale", 0.85f)
+            }
+            if (kotlin.math.abs((prefs?.getFloat("gridScale", 1f) ?: 1f) - 1f) < 0.001f) {
+                gridScale = 0.85f
+                editor?.putFloat("gridScale", 0.85f)
+            }
+            if (prefs?.getBoolean("showPlayerClock", false) == false) {
+                showPlayerClock = true
+                editor?.putBoolean("showPlayerClock", true)
+            }
+            if (prefs?.getString("playerClockBackdrop", "medium") == "medium") {
+                playerClockBackdrop = "none"
+                editor?.putString("playerClockBackdrop", "none")
+            }
+            editor?.putBoolean("playerDefaults20261021Applied", true)?.apply()
+        }
+        val savedCountryCode = prefs?.getString("searchCountryCode", "").orEmpty().uppercase(Locale.ROOT)
+        val countryInitialized = prefs?.getBoolean("countryInitialized", false) ?: false
+        if (savedCountryCode.isNotBlank()) {
+            searchCountryCode = savedCountryCode
+            prefs?.edit()?.putBoolean("countryInitialized", true)?.apply()
+        } else if (countryInitialized) {
             searchCountryCode = ""
-            prefs?.edit()?.putBoolean("countryExplicit", true)?.putString("searchCountryCode", "")?.apply()
+        } else {
+            val systemConfiguration = android.content.res.Resources.getSystem().configuration
+            val systemLocale = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+                systemConfiguration.locales[0]
+            } else {
+                @Suppress("DEPRECATION")
+                systemConfiguration.locale
+            }
+            val detectedCountry = systemLocale.country.uppercase(Locale.ROOT)
+                .takeIf { it in Locale.getISOCountries() }
+                .orEmpty()
+            searchCountryCode = detectedCountry
+            prefs?.edit()?.putString("searchCountryCode", detectedCountry)
+                ?.putBoolean("countryInitialized", true)?.apply()
         }
         bufferProfile = prefs?.getString("bufferProfile", "medium")?.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"
         playerVolume = (prefs?.getInt("playerVolume", 100) ?: 100).coerceIn(0, 200)
@@ -341,7 +399,7 @@ class HomeModel : ViewModel() {
         recommendations = if (watchedRecommendationThreshold == "never") recommendations else recommendations.filterNot { it.uuid in watchedVideoIds }
         loadRecommendations()
     }
-    fun updateExitMode(mode: String) { exitMode = mode.takeIf { it == "none" || it == "single" || it == "double" } ?: "none"; save() }
+    fun updateExitMode(mode: String) { exitMode = mode.takeIf { it == "none" || it == "single" || it == "double" } ?: "none"; prefs?.edit()?.putBoolean("exitModeUserSelected", true)?.putBoolean("exitModeDefaultInitialized", true)?.apply(); save() }
     fun updateVideoTitleLines(lines: Int) { videoTitleLines = lines.coerceIn(1, 3); save() }
     fun updateTickerSpeed(speed: Float) { tickerSpeed = (speed * 2).toInt().coerceIn(2, 16) / 2f; save() }
     fun updateContextMenuHoldSeconds(seconds: Float) { contextMenuHoldSeconds = (seconds * 2f).toInt().coerceIn(2, 10) / 2f; save() }
@@ -353,7 +411,7 @@ class HomeModel : ViewModel() {
     fun updateUiScale(scale: Float) { uiScale = scale.coerceIn(0.85f, 1.4f); save() }
     fun updateGridScale(scale: Float) { gridScale = scale.coerceIn(0.5f, 1.5f); save() }
     fun updateClock24Hour(enabled: Boolean) { clock24Hour = enabled; save() }
-    fun updateSearchCountry(code: String) { searchCountryCode = code.uppercase(); prefs?.edit()?.putBoolean("countryExplicit", true)?.apply(); save() }
+    fun updateSearchCountry(code: String) { searchCountryCode = code.uppercase(Locale.ROOT); prefs?.edit()?.putBoolean("countryInitialized", true)?.apply(); save() }
     fun updateBufferProfile(profile: String) { bufferProfile = profile.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"; save() }
     fun updatePlayerVolume(value: Int) { playerVolume = value.coerceIn(0, 200); save() }
 
@@ -402,6 +460,12 @@ class HomeModel : ViewModel() {
         val stored = runCatching { Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType) ?: emptyList() }.getOrDefault(emptyList())
         subscriptions.clear()
         subscriptions.addAll(stored)
+    }
+    fun syncFavorites() {
+        val videoType = object : TypeToken<List<Video>>() {}.type
+        val stored = runCatching { Gson().fromJson<List<Video>>(prefs?.getString("favorites", "[]"), videoType) ?: emptyList() }.getOrDefault(emptyList())
+        favorites.clear()
+        favorites.addAll(stored)
     }
     fun toggleSubscription(video: Video) {
         val channel = video.channel
@@ -578,7 +642,9 @@ class HomeModel : ViewModel() {
                     val channelHost = channel.host?.trim()?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/')
                     channel.copy(host = channelHost?.takeIf(String::isNotBlank) ?: normalizedHost)
                 }
-                serverChannels = if (start > 0) serverChannels + withHost else withHost
+                serverChannels = (if (start > 0) serverChannels + withHost else withHost)
+                    .sortedWith(compareByDescending<PeerTubeChannel> { it.videosCount ?: -1L }
+                        .thenBy { it.displayName ?: it.name.orEmpty() })
                 val countBatches = withHost.chunked(6)
                 countBatches.forEachIndexed { batchIndex, batch ->
                     val countedBatch = batch.map { channel -> async {
@@ -596,7 +662,8 @@ class HomeModel : ViewModel() {
                         val countedById = countedBatch.associateBy { it.id?.toString() ?: "${it.name}@${it.host}" }
                         serverChannels = serverChannels.map { current ->
                             countedById[current.id?.toString() ?: "${current.name}@${current.host}"] ?: current
-                        }
+                        }.sortedWith(compareByDescending<PeerTubeChannel> { it.videosCount ?: -1L }
+                            .thenBy { it.displayName ?: it.name.orEmpty() })
                     }
                     if (batchIndex < countBatches.lastIndex) delay(1_300L)
                 }
@@ -670,6 +737,10 @@ class HomeModel : ViewModel() {
 
 data class VideoSubscription(val name: String, val host: String, val displayName: String)
 
+private fun isTelevisionDevice(context: android.content.Context): Boolean =
+    context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable fun Home(m: HomeModel = viewModel()) {
     val density = LocalDensity.current
@@ -683,7 +754,7 @@ data class VideoSubscription(val name: String, val host: String, val displayName
 @OptIn(ExperimentalFoundationApi::class)
 @Composable private fun HomeContent(m: HomeModel) {
     val context = LocalContext.current
-    val isTvDevice = remember { context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) }
+    val isTvDevice = remember { isTelevisionDevice(context) }
     val tvProviderPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             m.load()
@@ -750,7 +821,11 @@ data class VideoSubscription(val name: String, val host: String, val displayName
     var lastBackPressAt by remember { mutableLongStateOf(0L) }
     DisposableEffect(lifecycleOwner, m) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) m.syncWatchProgress()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                m.syncWatchProgress()
+                m.syncFavorites()
+                m.syncSubscriptions()
+            }
         }
         lifecycleOwner?.lifecycle?.addObserver(observer)
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
@@ -808,7 +883,8 @@ data class VideoSubscription(val name: String, val host: String, val displayName
             val recognized = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
             if (recognized.isNotEmpty()) {
                 searchText = recognized
-                hasSearchSubmitted = true
+                m.query = recognized
+                hasSearchSubmitted = false
                 m.tab = "sepia"
             }
         }
@@ -1111,13 +1187,18 @@ data class VideoSubscription(val name: String, val host: String, val displayName
             } else if (m.tab == "sepia") {
                 Text(stringResource(R.string.nav_sepia), style = MaterialTheme.typography.headlineSmall)
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(
+                        onClick = startVoiceSearch,
+                        modifier = Modifier.size(52.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+                    ) {
+                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_search), tint = MaterialTheme.colorScheme.onPrimary)
+                    }
                     OutlinedTextField(
                         value = searchText,
                         onValueChange = { searchText = it; if (it.isBlank()) hasSearchSubmitted = false },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text(stringResource(R.string.search_peertube)) },
-                        trailingIcon = { TextButton(onClick = startVoiceSearch) { Text(stringResource(R.string.voice_search)) } }
+                        label = { Text(stringResource(R.string.search_peertube)) }
                     )
                 }
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
