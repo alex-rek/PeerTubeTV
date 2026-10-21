@@ -6,6 +6,7 @@ local.properties
 
 # Build outputs and generated files
 **/build/
+/app/release/
 captures/
 .externalNativeBuild/
 .cxx/

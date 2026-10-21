@@ -4,6 +4,8 @@
 
 PeerTubeTV подключается к серверам PeerTube с открытым API. Интерфейс рассчитан на управление пультом телевизора и сенсорный экран.
 
+Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerTubeTV — независимый проект, не связанный с SmartTube.
+
 [Скачать последнюю версию APK](https://github.com/alex-rek/PeerTubeTV/releases/latest) · [English](README.md)
 
 ## Возможности

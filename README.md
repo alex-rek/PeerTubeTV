@@ -4,6 +4,8 @@
 
 PeerTubeTV connects to PeerTube servers that expose the public PeerTube API. The app is designed for TV remote controls as well as touch screens.
 
+The interface design was inspired by [SmartTube](https://github.com/yuliskov/SmartTube), an Android TV media client. PeerTubeTV is an independent project and is not affiliated with SmartTube.
+
 [Download the latest APK](https://github.com/alex-rek/PeerTubeTV/releases/latest) · [Русская версия](README_RU.md)
 
 ## Features
