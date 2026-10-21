@@ -22,8 +22,8 @@ PeerTubeTV подключается к серверам PeerTube с открыт
 
 ## Скриншоты
 
-![Главный экран](screenshots/home.png)
-![Плеер](screenshots/player.png)
+![Главный экран](screenshots/rhome.png)
+![Плеер](screenshots/rplayer.png)
 
 ## Скачать и установить
 
