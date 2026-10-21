@@ -20,6 +20,11 @@ The interface design was inspired by [SmartTube](https://github.com/yuliskov/Sma
 
 Features can vary with the selected server and the availability of videos in the search index.
 
+## Screenshots
+
+![Home screen](screenshots/home.png)
+![Player](screenshots/player.png)
+
 ## Download and install
 
 Download the APK from the [Releases page](https://github.com/alex-rek/PeerTubeTV/releases/latest) and install it on an Android TV device or tablet. Android may ask you to allow installation from the app used to open the APK.
