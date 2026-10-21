@@ -1,0 +1,27 @@
+# Local Android Studio and Gradle state
+.gradle/
+.kotlin/
+.idea/
+local.properties
+
+# Build outputs and generated files
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Signing keys and local secrets
+*.jks
+*.keystore
+keystore.properties
+secrets.properties
+
+# Operating system/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.iml
