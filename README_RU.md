@@ -20,6 +20,11 @@ PeerTubeTV подключается к серверам PeerTube с открыт
 
 Доступность функций зависит от выбранного сервера и индекса поиска видео.
 
+## Скриншоты
+
+![Главный экран](screenshots/home.png)
+![Плеер](screenshots/player.png)
+
 ## Скачать и установить
 
 Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerTubeTV/releases/latest) и установите на Android TV или планшет. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
