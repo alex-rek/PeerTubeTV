@@ -224,6 +224,13 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var focusedControlIndex by remember(url) { mutableIntStateOf(-1) }
     var progressFocused by remember(url) { mutableStateOf(false) }
     val playerPreferences = remember(context) { context.getSharedPreferences("peertube", Context.MODE_PRIVATE) }
+    var subtitleBottomOffset by remember(playerPreferences) {
+        mutableFloatStateOf(playerPreferences.getFloat("subtitleBottomOffset", 0.20f).coerceIn(0.02f, 0.50f))
+    }
+    fun adjustSubtitleBottomOffset(delta: Float) {
+        subtitleBottomOffset = (subtitleBottomOffset + delta).coerceIn(0.02f, 0.50f)
+        playerPreferences.edit().putFloat("subtitleBottomOffset", subtitleBottomOffset).apply()
+    }
     var qualityPanelOpen by remember(url) { mutableStateOf(false) }
     var qualityPanelRow by remember(url) { mutableIntStateOf(0) }
     var subtitlePanelOpen by remember(url) { mutableStateOf(false) }
@@ -591,18 +598,34 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     else -> true
                 }
             } else if (subtitlePanelOpen) {
-                val lastRow = subtitles.size + 1
+                val lastRow = subtitles.size + 2
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> { subtitlePanelRow = (subtitlePanelRow - 1).coerceAtLeast(0); true }
                     KeyEvent.KEYCODE_DPAD_DOWN -> { subtitlePanelRow = (subtitlePanelRow + 1).coerceAtMost(lastRow); true }
-                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
                         if (event.nativeKeyEvent.repeatCount == 0) {
-                            when (subtitlePanelRow) {
-                                0 -> selectSubtitle(-1)
-                                in 1..subtitles.size -> selectSubtitle(subtitlePanelRow - 1)
-                                else -> { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
-                            }
+                            if (subtitlePanelRow == lastRow) adjustSubtitleBottomOffset(-0.02f)
+                            else if (subtitlePanelRow == 0) selectSubtitle(-1)
+                            else if (subtitlePanelRow in 1..subtitles.size) selectSubtitle(subtitlePanelRow - 1)
+                            else { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
                         }; true
+                    }
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (event.nativeKeyEvent.repeatCount == 0) {
+                            if (subtitlePanelRow == lastRow) adjustSubtitleBottomOffset(0.02f)
+                            else if (subtitlePanelRow == 0) selectSubtitle(-1)
+                            else if (subtitlePanelRow in 1..subtitles.size) selectSubtitle(subtitlePanelRow - 1)
+                            else { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
+                        }; true
+                    }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
+                        if (event.nativeKeyEvent.repeatCount == 0) when (subtitlePanelRow) {
+                            0 -> selectSubtitle(-1)
+                            in 1..subtitles.size -> selectSubtitle(subtitlePanelRow - 1)
+                            subtitles.size + 1 -> { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
+                            else -> adjustSubtitleBottomOffset(0.02f)
+                        }
+                        true
                     }
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { subtitlePanelOpen = false; showControls(); true }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.nativeKeyEvent.repeatCount == 0) { if (player.isPlaying) player.pause() else player.play() }; true }
@@ -674,13 +697,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 isFocusableInTouchMode = false
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 val subtitleSize = playerPreferences.getFloat("subtitleSize", 0.053f)
-                val subtitleOffset = playerPreferences.getFloat("subtitleBottomOffset", 0.06f)
                 val foreground = if (playerPreferences.getString("subtitleStyle", "default") == "yellow") android.graphics.Color.YELLOW else android.graphics.Color.WHITE
                 subtitleView?.setFractionalTextSize(subtitleSize)
-                subtitleView?.setBottomPaddingFraction(subtitleOffset)
+                subtitleView?.setBottomPaddingFraction(subtitleBottomOffset)
                 subtitleView?.setStyle(CaptionStyleCompat(foreground, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
             }
-        }, modifier = Modifier.fillMaxSize())
+        }, update = { playerView -> playerView.subtitleView?.setBottomPaddingFraction(subtitleBottomOffset) }, modifier = Modifier.fillMaxSize())
         if (isBuffering && playbackError == null) CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center), color = Color.White)
         playbackError?.let { Text(it, color = Color.White, modifier = Modifier.align(androidx.compose.ui.Alignment.Center).padding(24.dp)) }
         videoUnavailableReason?.let { reason ->
@@ -836,6 +858,10 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 val rememberRow = subtitles.size + 1
                 TextButton(onClick = { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == rememberRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
                     Text("${stringResource(R.string.subtitle_remember_channel)}  ${if (rememberSubtitleByChannel) "✓" else "○"}", color = Color.White, modifier = Modifier.fillMaxWidth())
+                }
+                val positionRow = subtitles.size + 2
+                TextButton(onClick = { adjustSubtitleBottomOffset(0.02f) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == positionRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text(stringResource(R.string.subtitle_position_from_bottom, (subtitleBottomOffset * 100).toInt()), color = Color.White, modifier = Modifier.fillMaxWidth())
                 }
             }
         }

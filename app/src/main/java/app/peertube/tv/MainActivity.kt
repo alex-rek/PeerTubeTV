@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -75,6 +76,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -96,6 +98,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withPermit
+import java.net.URI
 import java.util.Locale
 import java.text.DateFormat
 import java.text.SimpleDateFormat
@@ -288,6 +292,10 @@ class HomeModel : ViewModel() {
         private set
     var watchedRecommendationThreshold by mutableStateOf("never")
         private set
+    var recommendationBasis by mutableStateOf("history")
+        private set
+    var networkProxy by mutableStateOf(NetworkProxySettings())
+        private set
     val watchedVideoIds = mutableStateListOf<String>()
     val excludedRecommendationIds = mutableStateListOf<String>()
     var exitMode by mutableStateOf("none")
@@ -321,6 +329,43 @@ class HomeModel : ViewModel() {
         private set
     var peerSeekEnabled by mutableStateOf(true)
         private set
+    var searchSettings by mutableStateOf(SearchSettings())
+        private set
+    var searchSourceErrors by mutableStateOf<Map<SearchSource, String>>(emptyMap())
+        private set
+    var searchSourcesByVideo by mutableStateOf<Map<String, Set<SearchSource>>>(emptyMap())
+        private set
+    var searchHasMore by mutableStateOf(false)
+        private set
+    var searchNextPage by mutableIntStateOf(1)
+        private set
+    var isVerifyingAvailability by mutableStateOf(false)
+        private set
+    var availabilityByVideo by mutableStateOf<Map<String, AvailabilityCheck>>(emptyMap())
+        private set
+    var discoveredServers by mutableStateOf<List<DiscoveredServer>>(emptyList())
+        private set
+    var sortServersByAvailability by mutableStateOf(false)
+        private set
+    var checkingServerHosts by mutableStateOf<Set<String>>(emptySet())
+        private set
+    var isCheckingServerAvailability by mutableStateOf(false)
+        private set
+    var serverAvailabilityCheckSummary by mutableStateOf<String?>(null)
+        private set
+    val sortedDiscoveredServers: List<DiscoveredServer>
+        get() = if (!sortServersByAvailability) discoveredServers else discoveredServers.withIndex()
+            .sortedWith(compareBy<IndexedValue<DiscoveredServer>> { indexed ->
+                val server = indexed.value
+                val fresh = server.apiCheckedAt > 0L && System.currentTimeMillis() - server.apiCheckedAt <= 24L * 60L * 60L * 1000L
+                when { fresh && server.apiStatus == "available" -> 0; fresh && server.apiStatus == "unavailable" -> 2; else -> 1 }
+            }.thenBy { it.index }).map { it.value }
+    var isDiscoveringServers by mutableStateOf(false)
+        private set
+    var discoveryError by mutableStateOf<String?>(null)
+    private var searchSettingsRepository: SearchSettingsRepository? = null
+    private var serverRepository: ServerRepository? = null
+    private var serverDiscoveryManager: ServerDiscoveryManager? = null
     var videoSortMode by mutableStateOf("newest")
         private set
     var navigationSounds by mutableStateOf(true)
@@ -357,6 +402,25 @@ class HomeModel : ViewModel() {
     fun init(context: android.content.Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences("peertube", 0)
+        networkProxy = NetworkProxySettings(
+            enabled = prefs?.getBoolean("proxyEnabled", false) ?: false,
+            type = prefs?.getString("proxyType", "http") ?: "http",
+            host = prefs?.getString("proxyHost", "") ?: "",
+            port = prefs?.getInt("proxyPort", 8080) ?: 8080,
+            username = prefs?.getString("proxyUsername", "") ?: "",
+            password = prefs?.getString("proxyPassword", "") ?: ""
+        )
+        ApiFactory.configureProxy(networkProxy, context.applicationContext)
+        searchSettingsRepository = SearchSettingsRepository(context)
+        searchSettings = searchSettingsRepository!!.read()
+        serverRepository = ServerRepository(context).also { it.seedBundled(context) }
+        serverDiscoveryManager = ServerDiscoveryManager(context, serverRepository!!)
+        serverDiscoveryManager!!.schedulePeriodic()
+        discoveredServers = serverRepository!!.all()
+        sortServersByAvailability = prefs?.getBoolean("serverAvailabilitySort", false) ?: false
+        val discovery = serverDiscoveryManager!!.settings()
+        val lastDiscovery = prefs?.getLong("lastServerDiscoveryAt", 0L) ?: 0L
+        if (discovery.automatic && System.currentTimeMillis() - lastDiscovery >= discovery.refreshDays * 24L * 60L * 60L * 1000L) runServerDiscovery(manual = false)
         history.clear()
         favorites.clear()
         subscriptions.clear()
@@ -377,6 +441,7 @@ class HomeModel : ViewModel() {
         }
         watchedRecommendationThreshold = prefs?.getString("watchedRecommendationThreshold", if (prefs?.getBoolean("hideWatchedRecommendations", true) == true) "complete" else "never")
             ?.takeIf { it in setOf("never", "minute", "three_minutes", "half", "complete") } ?: "never"
+        recommendationBasis = prefs?.getString("recommendationBasis", "history")?.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         watchedVideoIds.clear()
         runCatching { watchedVideoIds.addAll(Gson().fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
         excludedRecommendationIds.clear()
@@ -458,7 +523,7 @@ class HomeModel : ViewModel() {
         }
         bufferProfile = prefs?.getString("bufferProfile", "medium")?.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"
         playerVolume = (prefs?.getInt("playerVolume", 100) ?: 100).coerceIn(0, 200)
-        peerSeekEnabled = prefs?.getBoolean("peerSeekEnabled", true) ?: true
+        peerSeekEnabled = SearchSource.PEERSEEK in searchSettings.enabled
         videoSortMode = prefs?.getString("videoSortMode", "newest")?.takeIf { it in setOf("newest", "popular", "title") } ?: "newest"
         navigationSounds = prefs?.getBoolean("navigationSounds", true) ?: true
         syncWatchProgress()
@@ -476,9 +541,25 @@ class HomeModel : ViewModel() {
         history.forEach { if (it.uuid !in historyViewedAt) historyViewedAt[it.uuid] = System.currentTimeMillis() }
         runCatching { favorites.addAll(Gson().fromJson<List<Video>>(prefs?.getString("favorites", "[]"), type) ?: emptyList()) }
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
-        runCatching { subscriptions.addAll(Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType) ?: emptyList()) }
+        runCatching {
+            subscriptions.addAll(Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
+                .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
+        }
     }
-    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("watchedVideoIds", Gson().toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", Gson().toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", Gson().toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", Gson().toJson(history))?.putString("favorites", Gson().toJson(favorites))?.putString("subscriptions", Gson().toJson(subscriptions))?.apply() }
+    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("watchedVideoIds", Gson().toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", Gson().toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", Gson().toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putBoolean("serverAvailabilitySort", sortServersByAvailability)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", Gson().toJson(history))?.putString("favorites", Gson().toJson(favorites))?.putString("subscriptions", Gson().toJson(subscriptions))?.apply() }
+    fun updateRecommendationBasis(basis: String) {
+        recommendationBasis = basis.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
+        save()
+        loadRecommendations()
+    }
+    fun updateNetworkProxy(settings: NetworkProxySettings) {
+        if (settings.enabled && (settings.host.isBlank() || settings.port !in 1..65535)) return
+        networkProxy = settings.copy(host = settings.host.trim())
+        ApiFactory.configureProxy(networkProxy, appContext)
+        prefs?.edit()?.putBoolean("proxyEnabled", networkProxy.enabled)?.putString("proxyType", networkProxy.type)
+            ?.putString("proxyHost", networkProxy.host)?.putInt("proxyPort", networkProxy.port)
+            ?.putString("proxyUsername", networkProxy.username)?.putString("proxyPassword", networkProxy.password)?.apply()
+    }
     fun excludeFromRecommendations(video: Video) {
         if (video.uuid !in excludedRecommendationIds) excludedRecommendationIds.add(video.uuid)
         recommendations = recommendations.filterNot { it.uuid == video.uuid }
@@ -525,7 +606,166 @@ class HomeModel : ViewModel() {
     fun updateSearchCountry(code: String) { searchCountryCode = code.uppercase(Locale.ROOT); prefs?.edit()?.putBoolean("countryInitialized", true)?.apply(); save() }
     fun updateBufferProfile(profile: String) { bufferProfile = profile.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"; save() }
     fun updatePlayerVolume(value: Int) { playerVolume = value.coerceIn(0, 200); save() }
-    fun updatePeerSeekEnabled(enabled: Boolean) { peerSeekEnabled = enabled; save() }
+    fun updatePeerSeekEnabled(enabled: Boolean) = updateSearchSourceEnabled(SearchSource.PEERSEEK, enabled)
+    fun updateSearchSourceEnabled(source: SearchSource, enabled: Boolean) {
+        searchSettingsRepository?.setEnabled(source, enabled)
+        searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(enabled = if (enabled) searchSettings.enabled + source else searchSettings.enabled - source)
+        peerSeekEnabled = SearchSource.PEERSEEK in searchSettings.enabled
+        sepiaSearchRequestId++
+        sepiaSearchJob?.cancel()
+        isSearching = false
+        searchSourceErrors = emptyMap()
+        error = null
+    }
+    fun moveSearchSource(source: SearchSource, delta: Int) {
+        val order = searchSettings.order.toMutableList()
+        val index = order.indexOf(source)
+        val target = (index + delta).coerceIn(0, order.lastIndex)
+        if (index >= 0 && target != index) {
+            val value = order.removeAt(index)
+            order.add(target, value)
+            searchSettingsRepository?.setOrder(order)
+            searchSettings = searchSettings.copy(order = order)
+        }
+    }
+    fun updateSearchExecutionMode(value: String) { searchSettingsRepository?.setMode(value); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(mode = value) }
+    fun updateSearchSufficientResults(value: Int) { searchSettingsRepository?.setSufficientResults(value); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(sufficientResults = value) }
+    fun updateCustomSearchIndexes(text: String) {
+        searchSettingsRepository?.setCustomIndexUrls(text.split(Regex("[\\r\\n,;]+")))
+        searchSettings = searchSettingsRepository?.read() ?: searchSettings
+    }
+    fun updateAvailabilityFilter(value: String) { searchSettingsRepository?.setAvailabilityFilter(value); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(availabilityFilter = value) }
+    fun setDiscoveryOption(key: String, value: Any) {
+        val d = serverDiscoveryManager ?: return
+        when (key) {
+            "automatic" -> d.setAutomatic(value as Boolean)
+            "depth" -> d.setMaxDepth(value as Int)
+            "max_new" -> d.setMaxNew(value as Int)
+            "refresh_days" -> d.setRefreshDays(value as Int)
+            "wifi_only" -> d.setWifiOnly(value as Boolean)
+            "join" -> d.setJoinEnabled(value as Boolean)
+            "federation" -> d.setFederationEnabled(value as Boolean)
+            "bundled" -> d.setBundledEnabled(value as Boolean)
+            "json_enabled" -> d.setRemoteJsonEnabled(value as Boolean)
+            "catalog_url" -> d.setServerJsonUrl(value as String)
+        }
+    }
+    fun discoverySettings() = serverDiscoveryManager?.settings() ?: DiscoverySettings()
+    fun serverJsonCatalogUrl() = serverDiscoveryManager?.serverJsonUrl().orEmpty()
+    fun serversForSearch(): List<DiscoveredServer> {
+        val d = discoverySettings()
+        return discoveredServers.filter { server -> server.discoveredFrom.any { source ->
+            source == "manual" || source == "video_source" || source == "federation_seed" || (source == "joinpeertube_seed" && d.bundledEnabled) ||
+                (source == "joinpeertube" && d.joinPeerTubeEnabled) || (source.startsWith("federation:") && d.federationEnabled) ||
+                (source == "remote_json" && d.remoteJsonEnabled)
+        } }
+    }
+    fun runServerDiscovery(manual: Boolean = true) {
+        val manager = serverDiscoveryManager ?: return
+        if (!manual) {
+            val discovery = manager.settings()
+            if (!discovery.automatic) return
+            if (discovery.wifiOnly) {
+                val context = appContext ?: return
+                val connectivity = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                val network = connectivity?.activeNetwork
+                val capabilities = network?.let(connectivity::getNetworkCapabilities)
+                if (capabilities?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) != true) return
+            }
+        }
+        viewModelScope.launch {
+            isDiscoveringServers = true
+            discoveryError = null
+            try {
+                manager.discover(server)
+                discoveredServers = serverRepository?.all().orEmpty()
+            } catch (e: Exception) { discoveryError = e.localizedMessage ?: e.javaClass.simpleName }
+            finally { isDiscoveringServers = false }
+        }
+    }
+    fun clearDiscoveredServers() {
+        serverRepository?.removeDiscovered()
+        discoveredServers = serverRepository?.all().orEmpty()
+    }
+    fun toggleServerFavorite(host: String) { serverRepository?.toggleFavorite(host); discoveredServers = serverRepository?.all().orEmpty() }
+    fun moveServerPriority(host: String, delta: Int) { serverRepository?.movePriority(host, delta); discoveredServers = serverRepository?.all().orEmpty() }
+    fun toggleServerAvailabilitySort() {
+        sortServersByAvailability = !sortServersByAvailability
+        prefs?.edit()?.putBoolean("serverAvailabilitySort", sortServersByAvailability)?.apply()
+    }
+    fun checkServerAvailability(host: String) {
+        if (host in checkingServerHosts) return
+        checkingServerHosts = checkingServerHosts + host
+        viewModelScope.launch {
+            try {
+                val check = ServerAvailabilityManager(serverRepository).checkApi(host)
+                serverRepository?.recordAvailability(host, api = check)
+                discoveredServers = serverRepository?.all().orEmpty()
+            } finally {
+                checkingServerHosts = checkingServerHosts - host
+            }
+        }
+    }
+    fun checkCachedServersAvailability() {
+        if (isCheckingServerAvailability) return
+        val servers = discoveredServers
+        val now = System.currentTimeMillis()
+        val stale = servers.filter { it.apiCheckedAt <= 0L || now - it.apiCheckedAt > 24L * 60L * 60L * 1000L }
+        val targets = (stale.ifEmpty { servers.sortedBy { it.apiCheckedAt } }).take(50)
+        if (targets.isEmpty()) return
+        isCheckingServerAvailability = true
+        val targetHosts = targets.mapTo(linkedSetOf()) { it.host }
+        checkingServerHosts = checkingServerHosts + targetHosts
+        serverAvailabilityCheckSummary = null
+        viewModelScope.launch {
+            try {
+                val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                val checks = targets.map { item -> async {
+                    semaphore.withPermit {
+                        item.host to ServerAvailabilityManager().checkApi(item.host)
+                    }
+                } }.awaitAll()
+                checks.forEach { (host, check) -> serverRepository?.recordAvailability(host, api = check) }
+                discoveredServers = serverRepository?.all().orEmpty()
+                val available = checks.count { it.second.state == "available" }
+                val unavailable = checks.count { it.second.state == "unavailable" }
+                val unknown = checks.size - available - unavailable
+                serverAvailabilityCheckSummary = appContext?.getString(
+                    R.string.server_check_summary, checks.size, servers.size, available, unavailable, unknown
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                serverAvailabilityCheckSummary = appContext?.getString(R.string.server_check_failed, e.localizedMessage ?: e.javaClass.simpleName)
+            } finally {
+                isCheckingServerAvailability = false
+                checkingServerHosts = checkingServerHosts - targetHosts
+            }
+        }
+    }
+    fun importServerCatalog(json: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { serverRepository?.importJson(json) }
+                .onSuccess { withContext(kotlinx.coroutines.Dispatchers.Main) { discoveredServers = serverRepository?.all().orEmpty(); discoveryError = null } }
+                .onFailure { withContext(kotlinx.coroutines.Dispatchers.Main) { discoveryError = it.localizedMessage ?: it.javaClass.simpleName } }
+        }
+    }
+    fun exportServerCatalog(): String = serverRepository?.exportJson().orEmpty()
+    fun addServerManually(address: String) {
+        val normalized = runCatching {
+            val uri = URI(if (address.contains("://")) address.trim() else "https://${address.trim()}")
+            require(uri.scheme == "https" && uri.userInfo == null && uri.query == null && uri.fragment == null)
+            uri.host?.lowercase(Locale.ROOT) ?: error("Invalid server address")
+        }.getOrElse { discoveryError = it.localizedMessage; return }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                require(SafeNetworkTarget.isSafeHttpsHost(normalized)) { "Only public server addresses are allowed" }
+                val configuration = ApiFactory.config("https://$normalized").customConfig()
+                serverRepository?.merge(listOf(DiscoveredServer(normalized, version = null, languages = configuration.instance?.languages.orEmpty(), discoveredFrom = setOf("manual"), apiStatus = "available", lastCheckedAt = System.currentTimeMillis())))
+                withContext(kotlinx.coroutines.Dispatchers.Main) { discoveredServers = serverRepository?.all().orEmpty(); discoveryError = null }
+            } catch (e: Exception) { withContext(kotlinx.coroutines.Dispatchers.Main) { discoveryError = e.localizedMessage ?: "PeerTube API could not be verified" } }
+        }
+    }
     fun updateVideoSortMode(mode: String) { videoSortMode = mode.takeIf { it in setOf("newest", "popular", "title") } ?: "newest"; save() }
     fun updateNavigationSounds(enabled: Boolean) { navigationSounds = enabled; save() }
     fun sortVideos(items: List<Video>): List<Video> = when (videoSortMode) {
@@ -576,7 +816,8 @@ class HomeModel : ViewModel() {
     }
     fun syncSubscriptions() {
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
-        val stored = runCatching { Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType) ?: emptyList() }.getOrDefault(emptyList())
+        val stored = runCatching { Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
+            .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) } }.getOrDefault(emptyList())
         subscriptions.clear()
         subscriptions.addAll(stored)
     }
@@ -604,18 +845,36 @@ class HomeModel : ViewModel() {
     fun loadSubscriptions() {
         viewModelScope.launch {
             if (subscriptions.isEmpty()) { subscriptionVideos = emptyList(); error = null; return@launch }
-            try {
-                error = null
-                val api = ApiFactory.sepiaSearch()
-                subscriptionVideos = subscriptions.flatMap { followed ->
-                    val result = api.videos(search = followed.name, count = 50).data
-                    result.filter { video ->
-                        val channelName = video.channel?.name ?: video.account?.name
-                        val channelHost = video.channel?.host ?: video.account?.host ?: video.host.orEmpty()
-                        channelName.equals(followed.name, ignoreCase = true) && (followed.host.isBlank() || channelHost.equals(followed.host, ignoreCase = true))
+            error = null
+            val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+            val failures = java.util.concurrent.ConcurrentLinkedQueue<String>()
+            val results = subscriptions.map { followed -> async {
+                semaphore.withPermit {
+                    val name = followed.name?.trim().orEmpty()
+                    val host = followed.host?.trim()?.removePrefix("https://")?.removePrefix("http://")?.substringBefore('/')?.trimEnd('.').orEmpty()
+                    if (name.isBlank() || host.isBlank() || !host.matches(Regex("(?i)[a-z0-9.-]{1,253}"))) return@withPermit emptyList()
+                    try {
+                        ApiFactory.create("https://$host").channelVideos("$name@$host", count = 50).data
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (channelError: Exception) {
+                        try {
+                            ApiFactory.create("https://$host").videos(search = name, count = 50).data.filter { video ->
+                                val channelName = video.channel?.name ?: video.account?.name
+                                val channelHost = video.channel?.host ?: video.account?.host ?: video.host.orEmpty()
+                                channelName.equals(name, ignoreCase = true) && channelHost.equals(host, ignoreCase = true)
+                            }
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            failures.add("$host: ${e.localizedMessage ?: channelError.localizedMessage ?: "request failed"}")
+                            emptyList()
+                        }
                     }
-                }.distinctBy { it.uuid }
-            } catch (e: Exception) { error = message(R.string.error_subscriptions, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) }
+                }
+            } }.awaitAll().flatten().distinctBy { it.uuid }
+            subscriptionVideos = results
+            if (results.isEmpty() && failures.isNotEmpty()) error = message(R.string.error_subscriptions, failures.joinToString("; "))
         }
     }
     @JvmName("applyUiLanguage")
@@ -713,39 +972,111 @@ class HomeModel : ViewModel() {
             }
         }
     }
-    fun searchSepia(search: String, sort: String = "-match", category: Int? = null, durationMin: Int? = null, durationMax: Int? = null, liveOnly: Boolean = false) {
+    fun searchSepia(search: String, sort: String = "-match", category: Int? = null, durationMin: Int? = null, durationMax: Int? = null, liveOnly: Boolean = false, page: Int = 0, append: Boolean = false) {
         val requestId = ++sepiaSearchRequestId
         sepiaSearchJob?.cancel()
         sepiaSearchJob = viewModelScope.launch {
             isSearching = true
+            if (!append) { searchSourceErrors = emptyMap(); searchSourcesByVideo = emptyMap(); searchHasMore = false; availabilityByVideo = emptyMap() }
             try {
                 error = null
-                val sepia = async {
-                    runCatching { ApiFactory.sepiaSearch().videos(
-                        search = countrySearchTerm(search), count = 100, sort = sort,
-                        categoryOneOf = category, durationMin = durationMin, durationMax = durationMax,
-                        isLive = if (liveOnly) true else null,
-                        languageOneOf = contentLanguage()
-                    ).data }.getOrDefault(emptyList())
+                val savedCache = runCatching { Gson().fromJson<List<Video>>(prefs?.getString("lastSearchVideos", "[]"), object : TypeToken<List<Video>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
+                val providers = linkedMapOf<SearchSource, suspend (SearchRequest) -> SearchBatch>()
+                providers[SearchSource.SEPIA] = { req ->
+                    val result = ApiFactory.sepiaSearch().videos(
+                        search = countrySearchTerm(req.query), start = req.page * req.pageSize, count = req.pageSize, sort = req.sort.takeUnless { it == "availability" } ?: "-match",
+                        categoryOneOf = req.category, durationMin = req.durationMin, durationMax = req.durationMax,
+                        isLive = if (req.liveOnly) true else null, languageOneOf = req.language
+                    )
+                    SearchBatch(result.data, result.total, if ((req.page + 1) * req.pageSize < result.total) req.page + 1 else null)
                 }
-                val peerSeek: kotlinx.coroutines.Deferred<List<Video>>? = if (peerSeekEnabled) async {
-                    runCatching {
-                        ApiFactory.peerSeek().search(
-                            query = search,
-                            sort = when (sort) { "-publishedAt" -> "date"; "-views" -> "views"; else -> "relevance" },
-                            language = contentLanguage(), size = 100
-                        ).videos.mapNotNull(PeerSeekVideo::asVideo)
-                            .filter { video -> (!liveOnly || video.isLive == true) && (durationMin == null || video.duration >= durationMin) && (durationMax == null || video.duration <= durationMax) }
-                    }.getOrDefault(emptyList())
-                } else null
-                val result = (sepia.await() + (peerSeek?.await().orEmpty())).distinctBy { it.uuid }
+                providers[SearchSource.PEERSEEK] = { req ->
+                    val result = ApiFactory.peerSeek().search(query = req.query, sort = when (req.sort) { "-publishedAt" -> "date"; "-views" -> "views"; else -> "relevance" }, language = req.language, page = req.page + 1, size = req.pageSize, includeLive = true)
+                    val items = result.videos.mapNotNull(PeerSeekVideo::asVideo).filter { (!req.liveOnly || it.isLive == true) && (req.durationMin == null || it.duration >= req.durationMin) && (req.durationMax == null || it.duration <= req.durationMax) }
+                    SearchBatch(items, result.total, (req.page + 1).takeIf { req.page * req.pageSize + items.size < result.total })
+                }
+                providers[SearchSource.FEDERATED] = { req ->
+                    val host = URI(req.activeServer).host ?: error("Invalid active PeerTube server")
+                    require(SafeNetworkTarget.isSafeHttpsHost(host)) { "Active PeerTube server address is not public" }
+                    val result = ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match")
+                    SearchBatch(result.data, result.total, (req.page + 1).takeIf { (req.page + 1) * req.pageSize < result.total })
+                }
+                providers[SearchSource.DIRECT] = { req ->
+                    val russianSearch = req.country.equals("RU", ignoreCase = true)
+                    val knownServers = serversForSearch().filter { it.apiStatus != "unavailable" }.sortedWith(
+                        compareByDescending<DiscoveredServer> { russianSearch && it.country.equals("RU", ignoreCase = true) }
+                            .thenByDescending { if (russianSearch || !it.country.equals("RU", ignoreCase = true)) it.priority else 0 }
+                    )
+                    val preferred = (listOf(req.activeServer) + knownServers.map { "https://${it.host}" })
+                        .distinct().take(5)
+                    val attempts = preferred.mapNotNull { url ->
+                        val host = runCatching { URI(url).host }.getOrNull() ?: return@mapNotNull null
+                        if (!withContext(kotlinx.coroutines.Dispatchers.IO) { SafeNetworkTarget.isSafeHttpsHost(host) }) return@mapNotNull null
+                        runCatching { ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match").data }
+                    }
+                    if (attempts.isEmpty() || attempts.all { it.isFailure }) error("No known PeerTube server could be reached")
+                    val found = attempts.mapNotNull { it.getOrNull() }.flatten()
+                    SearchBatch(found, found.size, (req.page + 1).takeIf { found.size >= req.pageSize })
+                }
+                providers[SearchSource.CUSTOM] = { req ->
+                    val client = CustomSearchIndexClient()
+                    val attempts = searchSettings.customIndexUrls.map { url -> runCatching { client.search(url, req.query, req.page + 1, req.pageSize) } }
+                    if (attempts.isEmpty() || attempts.all { it.isFailure }) error("All custom search indexes failed")
+                    val all = attempts.mapNotNull { it.getOrNull() }
+                    SearchBatch(all.flatMap { it.videos }, all.sumOf { it.total ?: it.videos.size }, (req.page + 1).takeIf { all.any { it.nextPage != null } })
+                }
+                providers[SearchSource.LOCAL] = { req ->
+                    val cachedQuery = prefs?.getString("lastSearchQuery", "").orEmpty()
+                    SearchBatch(if (cachedQuery.equals(req.query, true)) savedCache else emptyList())
+                }
+                val req = SearchRequest(search, page, 40, sort, category, durationMin, durationMax, liveOnly, contentLanguage(), searchCountryCode, server)
+                val outcome = SearchAggregator(providers).search(req, searchSettings)
+                var result = outcome.videos
+                result = result.filter { video ->
+                    (!liveOnly || video.isLive == true) &&
+                        (category == null || video.category?.id == category) &&
+                        (durationMin == null || video.duration >= durationMin) &&
+                        (durationMax == null || video.duration <= durationMax)
+                }
+                if (sort == "availability" && result.isNotEmpty()) {
+                    isVerifyingAvailability = true
+                    val checker = ServerAvailabilityManager(serverRepository)
+                    val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                    val checks = result.map { video -> async { semaphore.withPermit { video.uuid to checker.checkVideo(video) } } }.awaitAll().toMap()
+                    availabilityByVideo = availabilityByVideo + checks
+                    discoveredServers = serverRepository?.all().orEmpty()
+                    result = result.sortedWith(compareBy<Video> { when (checks[it.uuid]?.state) { "available" -> 0; "unavailable" -> 2; else -> 1 } }.thenByDescending { it.views })
+                    isVerifyingAvailability = false
+                }
+                if (searchSettings.availabilityFilter == "available_only" && result.isNotEmpty()) {
+                    isVerifyingAvailability = true
+                    val checker = ServerAvailabilityManager(serverRepository)
+                    val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+                    result = result.map { video -> async {
+                        semaphore.withPermit {
+                            val status = checker.checkVideo(video)
+                            availabilityByVideo = availabilityByVideo + (video.uuid to status)
+                            if (status.state == "available") video else null
+                        }
+                    } }.awaitAll().filterNotNull()
+                    discoveredServers = serverRepository?.all().orEmpty()
+                    isVerifyingAvailability = false
+                } else if (searchSettings.availabilityFilter == "unknown_or_available") {
+                    result = result.filter { availabilityByVideo[it.uuid]?.state != "unavailable" }
+                }
                 if (requestId == sepiaSearchRequestId) {
-                    videos = result
+                    videos = (if (append) videos else emptyList()) + result
                     query = search
+                    searchSourceErrors = outcome.errors
+                    searchSourcesByVideo = searchSourcesByVideo + outcome.sourcesByVideo
+                    searchHasMore = outcome.hasMore
+                    searchNextPage = page + 1
+                    if (outcome.errors.isEmpty() || result.isNotEmpty()) prefs?.edit()?.putString("lastSearchQuery", search)?.putString("lastSearchVideos", Gson().toJson(videos.take(100)))?.apply()
+                    if (result.isEmpty() && outcome.errors.isNotEmpty()) error = "${outcome.errors.size} search source(s) failed: ${outcome.errors.entries.joinToString { "${it.key.key}: ${it.value}" }}"
                 }
             } catch (e: Exception) {
                 if (requestId == sepiaSearchRequestId) error = message(R.string.error_sepia, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
-            } finally { if (requestId == sepiaSearchRequestId) isSearching = false }
+            } finally { if (requestId == sepiaSearchRequestId) { isSearching = false; isVerifyingAvailability = false } }
         }
     }
     fun loadChannelVideos(name: String, host: String) {
@@ -832,6 +1163,12 @@ class HomeModel : ViewModel() {
                     } }.awaitAll()
                 }
                 instances = if (loadMore) instances + enriched else enriched
+                serverRepository?.merge(enriched.map { instance -> DiscoveredServer(
+                    host = instance.host.trim().lowercase(Locale.ROOT), name = instance.name, version = instance.version,
+                    languages = instance.languages, country = instance.country, discoveredFrom = setOf("joinpeertube"),
+                    apiStatus = "unknown", totalVideos = instance.totalVideos
+                ) })
+                discoveredServers = serverRepository?.all().orEmpty()
             } catch (e: Exception) {
                 error = message(R.string.error_directory, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
@@ -839,13 +1176,39 @@ class HomeModel : ViewModel() {
             }
         }
     }
+    private suspend fun recommendationSubscriptionSeeds(): List<Video> {
+        if (subscriptions.isEmpty()) return emptyList()
+        val semaphore = kotlinx.coroutines.sync.Semaphore(4)
+        return kotlinx.coroutines.coroutineScope {
+            subscriptions.map { followed -> async {
+                semaphore.withPermit {
+                    val name = followed.name.trim()
+                    val host = followed.host.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trimEnd('.')
+                    if (name.isBlank() || !host.matches(Regex("(?i)[a-z0-9.-]{1,253}"))) return@withPermit emptyList()
+                    try { ApiFactory.create("https://$host").channelVideos("$name@$host", count = 30).data }
+                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (_: Exception) {
+                        runCatching { ApiFactory.create("https://$host").videos(search = name, count = 30).data.filter { v ->
+                            (v.channel?.name ?: v.account?.name).equals(name, true) &&
+                                (v.channel?.host ?: v.account?.host ?: v.host.orEmpty()).equals(host, true)
+                        } }.getOrDefault(emptyList())
+                    }
+                }
+            } }.awaitAll().flatten().distinctBy { it.uuid }
+        }
+    }
+
     fun loadRecommendations() {
         viewModelScope.launch {
-            val watched = history.take(30)
-            if (watched.isEmpty()) { recommendations = emptyList(); error = null; return@launch }
             isLoadingRecommendations = true
             try {
                 error = null
+                val watched = when (recommendationBasis) {
+                    "subscriptions" -> (if (subscriptionVideos.isEmpty()) recommendationSubscriptionSeeds().also { subscriptionVideos = it } else subscriptionVideos).take(60)
+                    "both" -> (history.take(30) + (if (subscriptionVideos.isEmpty()) recommendationSubscriptionSeeds().also { subscriptionVideos = it } else subscriptionVideos).take(60)).distinctBy { it.uuid }
+                    else -> history.take(30)
+                }
+                if (watched.isEmpty()) { recommendations = emptyList(); return@launch }
                 val stopWords = setOf("the", "and", "for", "with", "from", "this", "that", "как", "что", "это", "для", "или", "при", "про", "видео", "video")
                 val titleTokens = watched.flatMap { it.name.lowercase().split(Regex("[^\\p{L}\\p{N}]+")) }
                     .filter { it.length >= 3 && it !in stopWords }
@@ -881,6 +1244,13 @@ class HomeModel : ViewModel() {
 
 data class VideoSubscription(val name: String, val host: String, val displayName: String)
 
+internal fun normalizeVideoSubscription(subscription: VideoSubscription): VideoSubscription? {
+    val name = subscription.name?.trim()?.takeIf(String::isNotBlank) ?: return null
+    val host = subscription.host?.trim()?.removePrefix("https://")?.removePrefix("http://")
+        ?.substringBefore('/')?.trimEnd('.')?.takeIf { it.matches(Regex("(?i)[a-z0-9.-]{1,253}")) } ?: return null
+    return subscription.copy(name = name, host = host, displayName = subscription.displayName?.takeIf(String::isNotBlank) ?: name)
+}
+
 private fun isTelevisionDevice(context: android.content.Context): Boolean =
     context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) ||
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TELEVISION)
@@ -898,7 +1268,9 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
 @OptIn(ExperimentalFoundationApi::class)
 @Composable private fun HomeContent(m: HomeModel) {
     val context = LocalContext.current
-    val rootView = LocalView.current
+    val navigationTone = remember { android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 35) }
+    var lastNavigationToneAt by remember { mutableLongStateOf(0L) }
+    DisposableEffect(navigationTone) { onDispose { navigationTone.release() } }
     val isTvDevice = remember { isTelevisionDevice(context) }
     val tvProviderPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -916,6 +1288,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val lifecycleOwner = context as? LifecycleOwner
     val focusManager = LocalFocusManager.current
     val menuFocusRequester = remember { FocusRequester() }
+    val instanceCheckFocusRequester = remember { FocusRequester() }
     var menuExpanded by remember { mutableStateOf(false) }
     var settingsOverlay by remember { mutableStateOf(false) }
     var focusedVideoMenu by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
@@ -976,6 +1349,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
     LaunchedEffect(menuExpanded) { if (menuExpanded) menuFocusRequester.requestFocus() }
+    LaunchedEffect(m.tab) { if (m.tab == "instances") runCatching { instanceCheckFocusRequester.requestFocus() } }
     BackHandler {
         if (clearHistoryDialog) clearHistoryDialog = false
         else if (clearHistoryPeriodDialog) clearHistoryPeriodDialog = false
@@ -1115,12 +1489,15 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     var searchCategory by remember { mutableStateOf("any") }
     var searchDuration by remember { mutableStateOf("any") }
     var searchLiveOnly by remember { mutableStateOf(false) }
+    var searchAvailabilityFilter by remember { mutableStateOf("unknown_or_available") }
+    LaunchedEffect(m.searchSettings.availabilityFilter) { searchAvailabilityFilter = m.searchSettings.availabilityFilter }
     val sortOptions = listOf(
         "-match" to stringResource(R.string.search_relevance),
         "-publishedAt" to stringResource(R.string.search_sort_date),
         "-views" to stringResource(R.string.search_sort_views),
         "-likes" to stringResource(R.string.search_sort_likes),
-        "-duration" to stringResource(R.string.search_sort_duration)
+        "-duration" to stringResource(R.string.search_sort_duration),
+        "availability" to stringResource(R.string.search_sort_accessibility)
     )
     val categoryOptions = listOf(
         "any" to stringResource(R.string.search_category_any),
@@ -1143,7 +1520,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             m.query = term
             val durationMin = when (searchDuration) { "medium" -> 240; "long" -> 1200; else -> null }
             val durationMax = when (searchDuration) { "short" -> 240; "medium" -> 1200; else -> null }
-            m.searchSepia(term, searchSort, searchCategory.toIntOrNull(), durationMin, durationMax, searchLiveOnly)
+            m.searchSepia(term, searchSort, searchCategory.toIntOrNull(), durationMin, durationMax, searchLiveOnly, page = 0)
         }
     }
     LaunchedEffect(m.tab, searchText, searchSort, searchCategory, searchDuration, searchLiveOnly) {
@@ -1168,7 +1545,11 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     android.view.KeyEvent.KEYCODE_DPAD_DOWN -> android.view.SoundEffectConstants.NAVIGATION_DOWN
                     else -> null
                 }
-                if (sound != null) rootView.playSoundEffect(sound)
+                val now = android.os.SystemClock.uptimeMillis()
+                if (sound != null && now - lastNavigationToneAt >= 70L) {
+                    navigationTone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 32)
+                    lastNavigationToneAt = now
+                }
             }
             val isMenuKey = keyCode == android.view.KeyEvent.KEYCODE_MENU || keyCode == android.view.KeyEvent.KEYCODE_INFO || keyCode == android.view.KeyEvent.KEYCODE_SETTINGS
             when {
@@ -1250,6 +1631,94 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (m.isLoadingInstances) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (m.discoveredServers.isNotEmpty()) {
+                        item {
+                            var checkAllFocused by remember { mutableStateOf(false) }
+                            var sortFocused by remember { mutableStateOf(false) }
+                            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(stringResource(R.string.search_source_local), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+                                TextButton(
+                                    onClick = m::checkCachedServersAvailability,
+                                    enabled = !m.isCheckingServerAvailability,
+                                    modifier = Modifier
+                                        .focusRequester(instanceCheckFocusRequester)
+                                        .scale(if (checkAllFocused) 1.08f else 1f)
+                                        .background(if (checkAllFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
+                                        .onFocusChanged { checkAllFocused = it.isFocused }
+                                        .heightIn(min = 52.dp)
+                                ) {
+                                    Text(if (m.isCheckingServerAvailability) stringResource(R.string.server_checking) else stringResource(R.string.server_check_all))
+                                }
+                                TextButton(
+                                    onClick = m::toggleServerAvailabilitySort,
+                                    modifier = Modifier
+                                        .scale(if (sortFocused) 1.08f else 1f)
+                                        .background(if (sortFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
+                                        .onFocusChanged { sortFocused = it.isFocused }
+                                        .heightIn(min = 52.dp)
+                                ) {
+                                    Text(stringResource(if (m.sortServersByAvailability) R.string.server_sort_default else R.string.server_sort_availability))
+                                }
+                            }
+                        }
+                        if (m.serverAvailabilityCheckSummary != null || m.isCheckingServerAvailability) item {
+                            Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                                if (m.isCheckingServerAvailability) LinearProgressIndicator(Modifier.fillMaxWidth())
+                                m.serverAvailabilityCheckSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
+                        items(m.sortedDiscoveredServers, key = { "saved-${it.host}" }) { discovered ->
+                            var cardFocused by remember(discovered.host) { mutableStateOf(false) }
+                            var checkFocused by remember(discovered.host) { mutableStateOf(false) }
+                            val now = System.currentTimeMillis()
+                            fun statusResource(status: String, checkedAt: Long): Int = when {
+                                checkedAt <= 0L -> R.string.server_status_unknown
+                                now - checkedAt > 24L * 60L * 60L * 1000L -> R.string.server_status_stale
+                                status == "available" -> R.string.server_status_available
+                                status == "unavailable" -> R.string.server_status_unavailable
+                                else -> R.string.server_status_inconclusive
+                            }
+                            val freshApiCheck = discovered.apiCheckedAt > 0L && now - discovered.apiCheckedAt <= 24L * 60L * 60L * 1000L
+                            val apiMarkColor = when {
+                                freshApiCheck && discovered.apiStatus == "available" -> Color(0xFF4CAF50)
+                                freshApiCheck && discovered.apiStatus == "unavailable" -> Color(0xFFF44336)
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Card(
+                                onClick = { m.server = "https://${discovered.host}"; m.save(); m.tab = "home"; m.load() },
+                                colors = CardDefaults.cardColors(containerColor = if (cardFocused) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface),
+                                modifier = Modifier.fillMaxWidth().scale(if (cardFocused) 1.015f else 1f).onFocusChanged { cardFocused = it.isFocused }
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("●", color = apiMarkColor, modifier = Modifier.padding(end = 8.dp))
+                                            Text(discovered.name?.takeIf(String::isNotBlank) ?: discovered.host, style = MaterialTheme.typography.titleMedium)
+                                        }
+                                        Text(discovered.host, style = MaterialTheme.typography.bodyMedium)
+                                        Text("${discovered.version ?: "PeerTube"} · ${discovered.country.orEmpty()} · ${discovered.totalVideos ?: "—"} videos", style = MaterialTheme.typography.bodySmall)
+                                        val apiStatusText = stringResource(statusResource(discovered.apiStatus, discovered.apiCheckedAt))
+                                        val apiDetail = discovered.apiError?.let { " · $it" }.orEmpty()
+                                        Text("API $apiStatusText$apiDetail · ${stringResource(R.string.availability_metadata)} ${stringResource(statusResource(discovered.metadataStatus, discovered.metadataCheckedAt))} · ${stringResource(R.string.availability_video_stream)} ${stringResource(statusResource(discovered.streamStatus, discovered.streamCheckedAt))}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Column {
+                                        TextButton(
+                                            onClick = { m.checkServerAvailability(discovered.host) },
+                                            enabled = discovered.host !in m.checkingServerHosts,
+                                            modifier = Modifier.scale(if (checkFocused) 1.08f else 1f)
+                                                .background(if (checkFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
+                                                .onFocusChanged { checkFocused = it.isFocused }
+                                                .heightIn(min = 52.dp)
+                                        ) { Text(if (discovered.host in m.checkingServerHosts) "…" else stringResource(R.string.server_check_api)) }
+                                        TextButton(onClick = { m.toggleServerFavorite(discovered.host) }) { Text(if (discovered.favorite) "★" else "☆") }
+                                        TextButton(onClick = { m.moveServerPriority(discovered.host, -1) }) { Text("↑") }
+                                        TextButton(onClick = { m.moveServerPriority(discovered.host, 1) }) { Text("↓") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (m.sortedInstances.isNotEmpty()) item { Text(stringResource(R.string.directory_title), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp)) }
                     items(m.sortedInstances, key = { it.host }) { instance ->
                         Card(onClick = {
                             m.server = "https://${instance.host}"
@@ -1260,6 +1729,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             Column(Modifier.padding(14.dp)) {
                                 Text(instance.name?.takeIf(String::isNotBlank) ?: instance.host, style = MaterialTheme.typography.titleMedium)
                                 Text(instance.host, style = MaterialTheme.typography.bodyMedium)
+                                Text("${instance.version ?: "PeerTube"} · ${instance.country.orEmpty()}", style = MaterialTheme.typography.bodySmall)
                                 Text(stringResource(R.string.videos_count, instance.totalVideos?.toString() ?: "—", stringResource(if (instance.signupAllowed == true) R.string.signup_open else R.string.signup_closed)), style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -1364,6 +1834,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     SearchFilter(stringResource(R.string.search_sort), sortOptions.first { it.first == searchSort }.second, sortOptions) { searchSort = it }
                     SearchFilter(stringResource(R.string.search_category), categoryOptions.first { it.first == searchCategory }.second, categoryOptions) { searchCategory = it }
                     SearchFilter(stringResource(R.string.search_duration_filter), durationOptions.first { it.first == searchDuration }.second, durationOptions) { searchDuration = it }
+                    val availabilityOptions = listOf(
+                        "all" to stringResource(R.string.availability_all),
+                        "unknown_or_available" to stringResource(R.string.availability_unknown_or_available),
+                        "available_only" to stringResource(R.string.availability_available_only)
+                    )
+                    SearchFilter(stringResource(R.string.availability_filter), availabilityOptions.first { it.first == searchAvailabilityFilter }.second, availabilityOptions) { searchAvailabilityFilter = it; m.updateAvailabilityFilter(it); if (hasSearchSubmitted) submitSearch() }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.search_live_only), style = MaterialTheme.typography.bodySmall)
                         Switch(checked = searchLiveOnly, onCheckedChange = { searchLiveOnly = it })
@@ -1371,14 +1847,24 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 }
                 m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (m.isSearching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
+                if (m.isVerifyingAvailability) Text(stringResource(R.string.availability_checking), style = MaterialTheme.typography.bodySmall)
+                val searchContext = LocalContext.current
+                val usedSources = m.searchSourcesByVideo.values.flatten().toSet().sortedBy { m.searchSettings.order.indexOf(it) }.joinToString(", ") { source ->
+                    searchContext.getString(when (source) { SearchSource.SEPIA -> R.string.search_source_sepia; SearchSource.PEERSEEK -> R.string.search_source_peerseek; SearchSource.CUSTOM -> R.string.search_source_custom; SearchSource.FEDERATED -> R.string.search_source_federated; SearchSource.DIRECT -> R.string.search_source_direct; SearchSource.LOCAL -> R.string.search_source_local })
+                }
+                if (usedSources.isNotBlank()) Text(stringResource(R.string.search_sources_in_use, usedSources), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (SearchSource.LOCAL in m.searchSourcesByVideo.values.flatten() && m.searchSourceErrors.isNotEmpty()) Text(stringResource(R.string.search_cache_stale), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                if (m.searchSourceErrors.isNotEmpty()) Text(stringResource(R.string.search_source_errors, m.searchSourceErrors.entries.joinToString { (source, detail) -> "${source.key}: $detail" }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(m.sortVideos(m.videos), key = { it.uuid }) { video -> VideoGridCard(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, m.sortVideos(m.videos)) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         items(m.sortVideos(m.videos), key = { it.uuid }) { video -> VideoListRow(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, m.sortVideos(m.videos)) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
             } else if (m.tab == "settings") {
@@ -1668,10 +2154,22 @@ private fun SettingsDashboard(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit
 ) {
+    val firstSettingsCardFocus = remember { FocusRequester() }
+    LaunchedEffect(selectedCategory) {
+        if (selectedCategory == null) runCatching { firstSettingsCardFocus.requestFocus() }
+    }
     val settingsContext = LocalContext.current
     val playerPrefs = remember(settingsContext) { settingsContext.getSharedPreferences("peertube", 0) }
+    var customIndexesInput by remember { mutableStateOf(model.searchSettings.customIndexUrls.joinToString("\n")) }
+    var manualServerInput by remember { mutableStateOf("") }
+    var remoteServerCatalogInput by remember { mutableStateOf(model.serverJsonCatalogUrl()) }
+    val serverImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) runCatching { settingsContext.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }
+            .onSuccess { json -> if (!json.isNullOrBlank()) model.importServerCatalog(json) }
+            .onFailure { model.discoveryError = it.localizedMessage ?: it.javaClass.simpleName }
+    }
     var subtitleSize by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleSize", 0.053f)) }
-    var subtitleOffset by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleBottomOffset", 0.06f)) }
+    var subtitleOffset by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleBottomOffset", 0.20f).coerceIn(0.02f, 0.50f)) }
     var subtitleStyle by remember { mutableStateOf(playerPrefs.getString("subtitleStyle", "default") ?: "default") }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
     val categories = listOf(
@@ -1680,6 +2178,7 @@ private fun SettingsDashboard(
         "interface" to R.string.settings_interface,
         "player" to R.string.settings_player,
         "search" to R.string.settings_search,
+        "network" to R.string.settings_network,
         "backup" to R.string.settings_backup,
         "about" to R.string.settings_about
     )
@@ -1697,10 +2196,11 @@ private fun SettingsDashboard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(categories, key = { it.first }) { (key, title) ->
+                itemsIndexed(categories, key = { _, item -> item.first }) { index, (key, title) ->
                     Card(
                         onClick = { onSelectCategory(key) },
-                        modifier = Modifier.fillMaxWidth().height(132.dp),
+                        modifier = Modifier.fillMaxWidth().height(132.dp)
+                            .then(if (index == 0) Modifier.focusRequester(firstSettingsCardFocus) else Modifier),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
@@ -1710,6 +2210,7 @@ private fun SettingsDashboard(
                                 "interface" -> Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "player" -> Icon(Icons.Filled.LiveTv, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "search" -> SearchGlyph(54.dp)
+                                "network" -> Icon(Icons.Filled.Public, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "backup" -> Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(54.dp))
                                 else -> Text("i", style = MaterialTheme.typography.displaySmall)
                             }
@@ -1820,6 +2321,16 @@ private fun SettingsDashboard(
                                     "half" to stringResource(R.string.watched_threshold_half),
                                     "complete" to stringResource(R.string.watched_threshold_complete)
                                 )) { model.updateWatchedRecommendationThreshold(it) }
+                                val recommendationBasisLabel = stringResource(when (model.recommendationBasis) {
+                                    "subscriptions" -> R.string.recommendations_basis_subscriptions
+                                    "both" -> R.string.recommendations_basis_both
+                                    else -> R.string.recommendations_basis_history
+                                })
+                                SettingsChoice(stringResource(R.string.recommendations_basis), recommendationBasisLabel, listOf(
+                                    "history" to stringResource(R.string.recommendations_basis_history),
+                                    "subscriptions" to stringResource(R.string.recommendations_basis_subscriptions),
+                                    "both" to stringResource(R.string.recommendations_basis_both)
+                                )) { model.updateRecommendationBasis(it) }
                                 HorizontalDivider()
                                 Button(onClick = onClearHistory, enabled = model.history.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.settings_clear_history)) }
                                 val periodLabel = stringResource(when (historyPeriodHours) { 2 -> R.string.history_period_2; 3 -> R.string.history_period_3; 6 -> R.string.history_period_6; 24 -> R.string.history_period_24; else -> R.string.history_period_1 })
@@ -1867,19 +2378,89 @@ private fun SettingsDashboard(
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_remember_channel), Modifier.weight(1f)); Switch(rememberSubtitleChannel, { rememberSubtitleChannel = it; playerPrefs.edit().putBoolean("rememberSubtitleByChannel", it).apply() }) }
                                 SettingsChoice(stringResource(R.string.subtitle_style), stringResource(if (subtitleStyle == "yellow") R.string.subtitle_style_yellow else R.string.subtitle_style_default), listOf("default" to stringResource(R.string.subtitle_style_default), "yellow" to stringResource(R.string.subtitle_style_yellow))) { subtitleStyle = it; playerPrefs.edit().putString("subtitleStyle", it).apply() }
                                 SettingsChoice(stringResource(R.string.subtitle_size), "${(subtitleSize * 100).toInt()}%", listOf("0.04" to "Small", "0.053" to "Medium", "0.065" to "Large")) { subtitleSize = it.toFloat(); playerPrefs.edit().putFloat("subtitleSize", subtitleSize).apply() }
-                                SettingsChoice(stringResource(R.string.subtitle_bottom_offset), "${(subtitleOffset * 100).toInt()}%", listOf("0.02" to "2%", "0.06" to "6%", "0.10" to "10%", "0.15" to "15%")) { subtitleOffset = it.toFloat(); playerPrefs.edit().putFloat("subtitleBottomOffset", subtitleOffset).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_bottom_offset), "${(subtitleOffset * 100).toInt()}%", (5..50 step 5).map { "${it / 100f}" to "$it%" }) { subtitleOffset = it.toFloat(); playerPrefs.edit().putFloat("subtitleBottomOffset", subtitleOffset).apply() }
                             }
                             "search" -> {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text(stringResource(R.string.show_search_icon), Modifier.weight(1f))
                                     Switch(model.showSearchIcon, model::updateShowSearchIcon)
                                 }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(stringResource(R.string.search_peerseek), Modifier.weight(1f))
-                                    Switch(model.peerSeekEnabled, model::updatePeerSeekEnabled)
+                                val sourceLabels = listOf(
+                                    SearchSource.SEPIA to R.string.search_source_sepia,
+                                    SearchSource.PEERSEEK to R.string.search_source_peerseek,
+                                    SearchSource.CUSTOM to R.string.search_source_custom,
+                                    SearchSource.FEDERATED to R.string.search_source_federated,
+                                    SearchSource.DIRECT to R.string.search_source_direct,
+                                    SearchSource.LOCAL to R.string.search_source_local
+                                )
+                                Text(stringResource(R.string.search_methods), style = MaterialTheme.typography.titleMedium)
+                                model.searchSettings.order.forEachIndexed { index, source ->
+                                    val label = sourceLabels.first { it.first == source }.second
+                                    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("${index + 1}. ${stringResource(label)}", Modifier.weight(1f), maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                        Switch(checked = source in model.searchSettings.enabled, onCheckedChange = { model.updateSearchSourceEnabled(source, it) })
+                                        TextButton(onClick = { model.moveSearchSource(source, -1) }, enabled = index > 0) { Text("↑") }
+                                        TextButton(onClick = { model.moveSearchSource(source, 1) }, enabled = index < model.searchSettings.order.lastIndex) { Text("↓") }
+                                    }
                                 }
+                                SettingsChoice(stringResource(R.string.search_execution_mode), stringResource(when (model.searchSettings.mode) { "sequential" -> R.string.search_mode_sequential; "parallel" -> R.string.search_mode_parallel; else -> R.string.search_mode_hybrid }), listOf("sequential" to stringResource(R.string.search_mode_sequential), "parallel" to stringResource(R.string.search_mode_parallel), "hybrid" to stringResource(R.string.search_mode_hybrid))) { model.updateSearchExecutionMode(it) }
+                                SettingsChoice(stringResource(R.string.search_sufficient_results), model.searchSettings.sufficientResults.toString(), (10..100 step 10).map { it.toString() to it.toString() }) { model.updateSearchSufficientResults(it.toInt()) }
+                                Text(stringResource(R.string.search_custom_indexes_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                OutlinedTextField(value = customIndexesInput, onValueChange = { customIndexesInput = it; model.updateCustomSearchIndexes(it) }, modifier = Modifier.fillMaxWidth(), minLines = 2, maxLines = 5, label = { Text(stringResource(R.string.search_source_custom)) })
                                 val sortTitle = stringResource(when (model.videoSortMode) { "popular" -> R.string.video_sort_popular; "title" -> R.string.video_sort_title; else -> R.string.video_sort_newest })
                                 SettingsChoice(stringResource(R.string.video_sort_mode), sortTitle, listOf("newest" to stringResource(R.string.video_sort_newest), "popular" to stringResource(R.string.video_sort_popular), "title" to stringResource(R.string.video_sort_title))) { model.updateVideoSortMode(it) }
+                                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                                Text(stringResource(R.string.discovery_settings_title), style = MaterialTheme.typography.titleLarge)
+                                val discovery = model.discoverySettings()
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_automatic), Modifier.weight(1f)); Switch(discovery.automatic, { model.setDiscoveryOption("automatic", it) }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_bundled), Modifier.weight(1f)); Switch(discovery.bundledEnabled, { model.setDiscoveryOption("bundled", it) }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_join), Modifier.weight(1f)); Switch(discovery.joinPeerTubeEnabled, { model.setDiscoveryOption("join", it) }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_federation), Modifier.weight(1f)); Switch(discovery.federationEnabled, { model.setDiscoveryOption("federation", it) }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_json), Modifier.weight(1f)); Switch(discovery.remoteJsonEnabled, { model.setDiscoveryOption("json_enabled", it) }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.discovery_wifi), Modifier.weight(1f)); Switch(discovery.wifiOnly, { model.setDiscoveryOption("wifi_only", it) }) }
+                                SettingsChoice(stringResource(R.string.discovery_depth), discovery.maxDepth.toString(), (1..5).map { it.toString() to it.toString() }) { model.setDiscoveryOption("depth", it.toInt()) }
+                                SettingsChoice(stringResource(R.string.discovery_limit), discovery.maxNewPerRun.toString(), listOf(10, 20, 30, 50, 100).map { it.toString() to it.toString() }) { model.setDiscoveryOption("max_new", it.toInt()) }
+                                SettingsChoice(stringResource(R.string.discovery_refresh), "${discovery.refreshDays} d", listOf(1, 3, 7, 14, 30).map { it.toString() to "$it d" }) { model.setDiscoveryOption("refresh_days", it.toInt()) }
+                                OutlinedTextField(value = remoteServerCatalogInput, onValueChange = { remoteServerCatalogInput = it; model.setDiscoveryOption("catalog_url", it) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.discovery_json_url)) })
+                                OutlinedTextField(value = manualServerInput, onValueChange = { manualServerInput = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.server_host_hint)) })
+                                Button(onClick = { model.addServerManually(manualServerInput); manualServerInput = "" }, enabled = manualServerInput.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.server_add_manual)) }
+                                Button(onClick = { model.runServerDiscovery() }, enabled = !model.isDiscoveringServers, modifier = Modifier.fillMaxWidth()) { Text(if (model.isDiscoveringServers) stringResource(R.string.discovery_working) else stringResource(R.string.discovery_run)) }
+                                Text(stringResource(R.string.discovery_found, model.discoveredServers.size), style = MaterialTheme.typography.bodySmall)
+                                model.discoveryError?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(onClick = { model.clearDiscoveredServers() }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.discovery_clear)) }
+                                    OutlinedButton(onClick = { serverImportLauncher.launch(arrayOf("application/json", "text/json", "application/octet-stream")) }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.server_import)) }
+                                    OutlinedButton(onClick = {
+                                        val send = Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_TEXT, model.exportServerCatalog())
+                                        settingsContext.startActivity(Intent.createChooser(send, settingsContext.getString(R.string.server_export)))
+                                    }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.server_export)) }
+                                }
+                            }
+                            "network" -> {
+                                var proxyEnabled by remember(model) { mutableStateOf(model.networkProxy.enabled) }
+                                var proxyType by remember(model) { mutableStateOf(model.networkProxy.type) }
+                                var proxyHost by remember(model) { mutableStateOf(model.networkProxy.host) }
+                                var proxyPort by remember(model) { mutableStateOf(model.networkProxy.port.toString()) }
+                                var proxyUsername by remember(model) { mutableStateOf(model.networkProxy.username) }
+                                var proxyPassword by remember(model) { mutableStateOf(model.networkProxy.password) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.proxy_enabled), Modifier.weight(1f))
+                                    Switch(checked = proxyEnabled, onCheckedChange = { proxyEnabled = it })
+                                }
+                                SettingsChoice(stringResource(R.string.proxy_type), stringResource(if (proxyType == "socks5") R.string.proxy_socks5 else R.string.proxy_http), listOf(
+                                    "http" to stringResource(R.string.proxy_http), "socks5" to stringResource(R.string.proxy_socks5)
+                                )) { proxyType = it }
+                                OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.proxy_host)) })
+                                OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it.filter(Char::isDigit).take(5) }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.proxy_port)) })
+                                OutlinedTextField(value = proxyUsername, onValueChange = { proxyUsername = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.proxy_username)) })
+                                OutlinedTextField(value = proxyPassword, onValueChange = { proxyPassword = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.proxy_password)) }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+                                Button(onClick = {
+                                    val port = proxyPort.toIntOrNull() ?: 0
+                                    model.updateNetworkProxy(NetworkProxySettings(proxyEnabled, proxyType, proxyHost, port, proxyUsername, proxyPassword))
+                                }, enabled = !proxyEnabled || (proxyHost.isNotBlank() && proxyPort.toIntOrNull() in 1..65535), modifier = Modifier.fillMaxWidth()) {
+                                    Text(stringResource(R.string.proxy_apply))
+                                }
+                                Text(stringResource(R.string.proxy_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             "backup" -> {
                                 Text(stringResource(R.string.backup_help), style = MaterialTheme.typography.bodyMedium)
@@ -1889,6 +2470,7 @@ private fun SettingsDashboard(
                             "about" -> {
                                 Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodyLarge)
                                 Text(stringResource(R.string.about_version_date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.about_artic_fox), style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }
@@ -1902,13 +2484,50 @@ private fun SettingsDashboard(
 @Composable
 private fun SettingsChoice(title: String, selected: String, options: List<Pair<String, String>>, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Text(title, style = MaterialTheme.typography.titleSmall)
-    Box {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-            Text(selected, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    var restoreFocus by remember { mutableStateOf(false) }
+    val choiceFocus = remember { FocusRequester() }
+    val firstOptionFocus = remember { FocusRequester() }
+    LaunchedEffect(expanded, restoreFocus) {
+        if (expanded) {
+            runCatching { firstOptionFocus.requestFocus() }
+        } else if (restoreFocus) {
+            withFrameNanos { }
+            runCatching { choiceFocus.requestFocus() }
+            restoreFocus = false
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { (value, label) -> DropdownMenuItem(text = { Text(label) }, onClick = { expanded = false; onSelect(value) }) }
+    }
+    Text(title, style = MaterialTheme.typography.titleSmall)
+    OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().focusRequester(choiceFocus)) {
+            Text(selected, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+    }
+    if (expanded) {
+        Dialog(
+            onDismissRequest = { expanded = false; restoreFocus = true },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.48f)), contentAlignment = Alignment.CenterEnd) {
+                Surface(
+                    modifier = Modifier.fillMaxHeight().fillMaxWidth(0.32f),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(0.dp)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            options.forEachIndexed { index, (value, label) ->
+                                val optionModifier = Modifier.fillMaxWidth().then(if (index == 0) Modifier.focusRequester(firstOptionFocus) else Modifier)
+                                if (value == selected) {
+                                    Button(onClick = { expanded = false; restoreFocus = true; onSelect(value) }, modifier = optionModifier) { Text(label) }
+                                } else {
+                                    OutlinedButton(onClick = { expanded = false; restoreFocus = true; onSelect(value) }, modifier = optionModifier) { Text(label) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1958,7 +2577,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
     val channel = video.channel?.name ?: video.account?.name ?: video.channel?.displayName ?: video.account?.displayName ?: ""
     Box {
         Card(
-            modifier = Modifier.fillMaxWidth().scale(if (focused) 1.05f else 1f)
+            modifier = Modifier.fillMaxWidth().zIndex(if (focused) 1f else 0f)
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null)
