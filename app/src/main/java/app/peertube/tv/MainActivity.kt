@@ -2437,12 +2437,16 @@ private fun SettingsDashboard(
                                 }
                             }
                             "network" -> {
+                                val proxyCheckScope = rememberCoroutineScope()
                                 var proxyEnabled by remember(model) { mutableStateOf(model.networkProxy.enabled) }
                                 var proxyType by remember(model) { mutableStateOf(model.networkProxy.type) }
                                 var proxyHost by remember(model) { mutableStateOf(model.networkProxy.host) }
                                 var proxyPort by remember(model) { mutableStateOf(model.networkProxy.port.toString()) }
                                 var proxyUsername by remember(model) { mutableStateOf(model.networkProxy.username) }
                                 var proxyPassword by remember(model) { mutableStateOf(model.networkProxy.password) }
+                                var proxyCheckStatus by remember(model) { mutableStateOf<String?>(null) }
+                                var proxyCheckPassed by remember(model) { mutableStateOf<Boolean?>(null) }
+                                var proxyCheckRunning by remember(model) { mutableStateOf(false) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text(stringResource(R.string.proxy_enabled), Modifier.weight(1f))
                                     Switch(checked = proxyEnabled, onCheckedChange = { proxyEnabled = it })
@@ -2456,9 +2460,40 @@ private fun SettingsDashboard(
                                 OutlinedTextField(value = proxyPassword, onValueChange = { proxyPassword = it }, modifier = Modifier.fillMaxWidth(), singleLine = true, label = { Text(stringResource(R.string.proxy_password)) }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
                                 Button(onClick = {
                                     val port = proxyPort.toIntOrNull() ?: 0
-                                    model.updateNetworkProxy(NetworkProxySettings(proxyEnabled, proxyType, proxyHost, port, proxyUsername, proxyPassword))
-                                }, enabled = !proxyEnabled || (proxyHost.isNotBlank() && proxyPort.toIntOrNull() in 1..65535), modifier = Modifier.fillMaxWidth()) {
-                                    Text(stringResource(R.string.proxy_apply))
+                                    val settings = NetworkProxySettings(proxyEnabled, proxyType, proxyHost.trim(), port, proxyUsername, proxyPassword)
+                                    model.updateNetworkProxy(settings)
+                                    proxyCheckRunning = true
+                                    proxyCheckPassed = null
+                                    proxyCheckStatus = settingsContext.getString(R.string.proxy_checking)
+                                    proxyCheckScope.launch {
+                                        val result = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                            runCatching {
+                                                ApiFactory.safeHttpGet("https://peervideo.ru/api/v1/config").use { response ->
+                                                    val message = when {
+                                                        response.code == 407 -> settingsContext.getString(R.string.proxy_check_auth_failed)
+                                                        settings.enabled && response.isSuccessful -> settingsContext.getString(R.string.proxy_check_success, response.code)
+                                                        !settings.enabled && response.isSuccessful -> settingsContext.getString(R.string.proxy_check_direct_success, response.code)
+                                                        else -> settingsContext.getString(R.string.proxy_check_response, response.code)
+                                                    }
+                                                    message to (response.code in 200..299)
+                                                }
+                                            }.getOrElse { error ->
+                                                settingsContext.getString(R.string.proxy_check_failed, error.localizedMessage ?: error.javaClass.simpleName) to false
+                                            }
+                                        }
+                                        proxyCheckStatus = result.first
+                                        proxyCheckPassed = result.second
+                                        proxyCheckRunning = false
+                                    }
+                                }, enabled = !proxyCheckRunning && (!proxyEnabled || (proxyHost.isNotBlank() && proxyPort.toIntOrNull() in 1..65535)), modifier = Modifier.fillMaxWidth()) {
+                                    Text(if (proxyCheckRunning) stringResource(R.string.proxy_checking) else stringResource(R.string.proxy_apply))
+                                }
+                                proxyCheckStatus?.let { status ->
+                                    Text(status, style = MaterialTheme.typography.bodySmall, color = when (proxyCheckPassed) {
+                                        true -> MaterialTheme.colorScheme.primary
+                                        false -> MaterialTheme.colorScheme.error
+                                        null -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    })
                                 }
                                 Text(stringResource(R.string.proxy_help), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }

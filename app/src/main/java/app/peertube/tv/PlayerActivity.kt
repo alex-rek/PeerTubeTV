@@ -44,6 +44,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
@@ -220,6 +221,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var thresholdMarked by remember(uuid) { mutableStateOf(false) }
     var playerPosition by remember(url) { mutableLongStateOf(0L) }
     var playbackActive by remember(url) { mutableStateOf(false) }
+    var keepScreenAwake by remember(url) { mutableStateOf(false) }
     var controlsInteractionToken by remember(url) { mutableIntStateOf(0) }
     var focusedControlIndex by remember(url) { mutableIntStateOf(-1) }
     var progressFocused by remember(url) { mutableStateOf(false) }
@@ -290,10 +292,39 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     }
     val latestOnVideoEnded by rememberUpdatedState(onVideoEnded)
     val player = remember(url, bufferProfile, playerVolume) {
-        ExoPlayer.Builder(context).setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(ApiFactory.media3DataSourceFactory())
+        ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory)
+            .setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
             volume = playerVolume / 100f
             val exoPlayer = this
             addListener(object : Player.Listener {
+                private fun updateScreenAwakeState() {
+                    keepScreenAwake = exoPlayer.playWhenReady &&
+                        exoPlayer.playbackState != Player.STATE_IDLE &&
+                        exoPlayer.playbackState != Player.STATE_ENDED
+                }
+
+                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                    updateScreenAwakeState()
+                }
+
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    updateScreenAwakeState()
+                    isBuffering = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
+                    if (playbackState == Player.STATE_ENDED) {
+                        if (!uuid.isNullOrBlank() && watchedRecommendationThreshold != "never" && !thresholdMarked) {
+                            markVideoWatched(context, uuid)
+                            thresholdMarked = true
+                        }
+                        if (!uuid.isNullOrBlank()) persistWatchProgress(context, uuid, 0L)
+                        if (afterVideoAction == "repeat") {
+                            exoPlayer.seekTo(0)
+                            exoPlayer.playWhenReady = true
+                        } else latestOnVideoEnded()
+                    }
+                }
+
                 override fun onPlayerError(error: PlaybackException) {
                     val decoderFailure: MediaCodecRenderer.DecoderInitializationException? = generateSequence<Throwable>(error) { cause -> cause.cause }
                         .filterIsInstance<MediaCodecRenderer.DecoderInitializationException>()
@@ -341,20 +372,6 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                         playbackError = context.getString(R.string.player_playback_error, error.localizedMessage ?: context.getString(R.string.error_request))
                     }
                 }
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    isBuffering = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
-                    if (playbackState == Player.STATE_ENDED) {
-                        if (!uuid.isNullOrBlank() && watchedRecommendationThreshold != "never" && !thresholdMarked) {
-                            markVideoWatched(context, uuid)
-                            thresholdMarked = true
-                        }
-                        if (!uuid.isNullOrBlank()) persistWatchProgress(context, uuid, 0L)
-                        if (afterVideoAction == "repeat") {
-                            exoPlayer.seekTo(0)
-                            exoPlayer.playWhenReady = true
-                        } else latestOnVideoEnded()
-                    }
-                }
             })
             val subtitleConfigurations = subtitles.mapNotNull { caption ->
                 val path = caption.fileUrl?.takeIf(String::isNotBlank) ?: caption.captionPath?.takeIf(String::isNotBlank)
@@ -380,6 +397,22 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 if (savedPosition > 0L) seekTo(savedPosition)
             }
             playWhenReady = true
+        }
+    }
+    val playerWindow = (context as? Activity)?.window
+    val originallyKeepScreenOn = remember(playerWindow) {
+        playerWindow?.let { it.attributes.flags and android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0 } == true
+    }
+    DisposableEffect(playerWindow, keepScreenAwake) {
+        playerWindow?.let { window ->
+            if (keepScreenAwake) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else if (!originallyKeepScreenOn) window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            playerWindow?.let { window ->
+                if (originallyKeepScreenOn) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
     LaunchedEffect(player, uuid) {

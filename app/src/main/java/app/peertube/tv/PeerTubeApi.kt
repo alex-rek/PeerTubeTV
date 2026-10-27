@@ -198,9 +198,14 @@ object ApiFactory {
                 override fun connectFailed(uri: java.net.URI?, socketAddress: java.net.SocketAddress?, error: java.io.IOException?) = Unit
             })
             if (username.isNotBlank()) java.net.Authenticator.setDefault(object : java.net.Authenticator() {
-                override fun getPasswordAuthentication(): java.net.PasswordAuthentication? =
-                    if (requestorType == RequestorType.PROXY && requestingHost.equals(proxyHost, true) && requestingPort == proxyPort)
+                override fun getPasswordAuthentication(): java.net.PasswordAuthentication? {
+                    // Android may report SOCKS5 credentials with a requestor type other
+                    // than PROXY. Match the configured proxy endpoint as well, as RussTube does.
+                    val socksAuthentication = normalized.type == "socks5"
+                    val proxyRequest = requestorType == RequestorType.PROXY || socksAuthentication
+                    return if (proxyRequest && requestingHost.equals(proxyHost, true) && requestingPort == proxyPort)
                         java.net.PasswordAuthentication(username, password.toCharArray()) else null
+                }
             }) else java.net.Authenticator.setDefault(null)
         } else {
             java.net.ProxySelector.setDefault(systemProxySelector)
@@ -253,6 +258,12 @@ object ApiFactory {
         }
         return builder.build()
     }
+
+    /** Shares the configured proxy-aware client with Media3 so HLS playlists and segments
+     * follow the same proxy and authentication path as API and image requests. */
+    fun media3DataSourceFactory(): androidx.media3.datasource.DataSource.Factory =
+        androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(safeHttpClient)
+            .setUserAgent("PeerTubeTV")
 
     @Synchronized
     fun create(server: String): PeerTubeApi {
