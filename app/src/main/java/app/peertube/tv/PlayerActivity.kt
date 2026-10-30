@@ -10,6 +10,7 @@ import android.view.Surface
 import android.view.SurfaceView
 import androidx.activity.compose.setContent
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.verticalScroll
@@ -17,8 +18,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -37,6 +42,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.view.LayoutInflater
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import androidx.media3.common.MediaItem
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
@@ -226,9 +234,26 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var focusedControlIndex by remember(url) { mutableIntStateOf(-1) }
     var progressFocused by remember(url) { mutableStateOf(false) }
     val playerPreferences = remember(context) { context.getSharedPreferences("peertube", Context.MODE_PRIVATE) }
+    val appUiLanguageTag = AppCompatDelegate.getApplicationLocales().toLanguageTags().ifBlank { "auto" }
+    val interfaceTranslationLanguage = interfaceSubtitleLanguage(appUiLanguageTag)
     var subtitleBottomOffset by remember(playerPreferences) {
         mutableFloatStateOf(playerPreferences.getFloat("subtitleBottomOffset", 0.20f).coerceIn(0.02f, 0.50f))
     }
+    var subtitleHorizontalPosition by remember(playerPreferences) { mutableFloatStateOf(playerPreferences.getFloat("subtitleHorizontalPosition", 0.50f).coerceIn(0.05f, 0.95f)) }
+    var subtitleSize by remember(playerPreferences) { mutableFloatStateOf(playerPreferences.getFloat("subtitleSize", 0.053f)) }
+    var subtitleColor by remember(playerPreferences) { mutableStateOf(playerPreferences.getString("subtitleColor", if (playerPreferences.getString("subtitleStyle", "default") == "yellow") "yellow" else "white") ?: "white") }
+    var subtitleTranslationLanguage by remember(playerPreferences, appUiLanguageTag) {
+        mutableStateOf(if (!playerPreferences.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceTranslationLanguage
+        else playerPreferences.getString("subtitleTranslationLanguage", interfaceTranslationLanguage) ?: interfaceTranslationLanguage)
+    }
+    var subtitleTranslationEnabled by remember(url) { mutableStateOf(false) }
+    val translatedCues = remember(url) { mutableStateListOf<TranslatedCue>() }
+    val sourceSubtitleCues = remember(url) { mutableStateListOf<TranslatedCue>() }
+    var translationProgress by remember(url) { mutableIntStateOf(0) }
+    var translationTotal by remember(url) { mutableIntStateOf(0) }
+    var translationPreparing by remember(url) { mutableStateOf(false) }
+    var translationError by remember(url) { mutableStateOf<String?>(null) }
+    var translationJob by remember(url) { mutableStateOf<Job?>(null) }
     fun adjustSubtitleBottomOffset(delta: Float) {
         subtitleBottomOffset = (subtitleBottomOffset + delta).coerceIn(0.02f, 0.50f)
         playerPreferences.edit().putFloat("subtitleBottomOffset", subtitleBottomOffset).apply()
@@ -237,8 +262,28 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var qualityPanelRow by remember(url) { mutableIntStateOf(0) }
     var subtitlePanelOpen by remember(url) { mutableStateOf(false) }
     var subtitlePanelRow by remember(url) { mutableIntStateOf(0) }
+    var autoTranslationConsidered by remember(url) { mutableStateOf(false) }
+    val subtitlePanelScrollState = rememberScrollState()
+    val subtitlePanelDensity = androidx.compose.ui.platform.LocalDensity.current
     var infoPanelOpen by remember(url) { mutableStateOf(false) }
     var infoPanelChannelFocused by remember(url) { mutableStateOf(false) }
+    var commentsPanelOpen by remember(url) { mutableStateOf(false) }
+    var commentsPanelRow by remember(url) { mutableIntStateOf(0) }
+    var comments by remember(uuid) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var commentsTotal by remember(uuid) { mutableIntStateOf(0) }
+    var commentsError by remember(uuid) { mutableStateOf<String?>(null) }
+    var commentsStart by remember(uuid) { mutableIntStateOf(0) }
+    var commentsLoading by remember(uuid) { mutableStateOf(false) }
+    var commentsLoaded by remember(uuid) { mutableStateOf(false) }
+    val infoScrollState = rememberScrollState()
+    val commentsScrollState = rememberScrollState()
+    val panelScope = rememberCoroutineScope()
+    LaunchedEffect(subtitlePanelOpen, subtitlePanelRow, subtitles.size) {
+        if (subtitlePanelOpen) {
+            val target = with(subtitlePanelDensity) { (64 + subtitlePanelRow * 56).dp.roundToPx() }
+            subtitlePanelScrollState.animateScrollTo(target.coerceAtMost(subtitlePanelScrollState.maxValue))
+        }
+    }
     var selectedVideoCodec by remember { mutableStateOf(playerPreferences.getString("playerVideoCodec", "auto") ?: "auto") }
     var selectedAudioFormat by remember { mutableStateOf(playerPreferences.getString("playerAudioFormat", "auto") ?: "auto") }
     var selectedAudioLanguage by remember { mutableStateOf(playerPreferences.getString("playerAudioLanguage", "auto") ?: "auto") }
@@ -252,6 +297,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var repeatVideo by remember(url) { mutableStateOf(false) }
     val subtitleChannelKey = "subtitleTrack:${channelHost.lowercase()}:${channelName.orEmpty().lowercase()}"
     var rememberSubtitleByChannel by remember { mutableStateOf(playerPreferences.getBoolean("rememberSubtitleByChannel", true)) }
+    val preferredSubtitleLanguage = playerPreferences.getString("preferredSubtitleLanguage", "auto") ?: "auto"
+    val subtitlesEnabledByDefault = playerPreferences.getBoolean("subtitlesEnabledByDefault", false)
     var selectedSubtitleIndex by remember(subtitleChannelKey) { mutableIntStateOf(if (rememberSubtitleByChannel) playerPreferences.getInt(subtitleChannelKey, -1) else -1) }
     var subtitlesEnabled by remember(url, subtitleChannelKey) { mutableStateOf(selectedSubtitleIndex >= 0) }
     val favoriteVideo = remember(uuid, title, server, channelName, channelHost, channelDisplayName) {
@@ -278,6 +325,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         if (!uuid.isNullOrBlank()) add(7)
         add(8)
         if (!uuid.isNullOrBlank()) add(9)
+        if (!uuid.isNullOrBlank()) add(10)
     }
 
     val trackSelector = remember(url) { DefaultTrackSelector(context) }
@@ -505,10 +553,17 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 }
             }
             9 -> { infoPanelOpen = !infoPanelOpen; infoPanelChannelFocused = false }
+            10 -> { commentsPanelOpen = !commentsPanelOpen; commentsPanelRow = 0 }
         }
         showControls()
     }
     fun selectSubtitle(index: Int) {
+        if (subtitleTranslationEnabled) {
+            subtitleTranslationEnabled = false
+            translatedCues.clear()
+            sourceSubtitleCues.clear()
+            translationJob?.cancel()
+        }
         selectedSubtitleIndex = index
         subtitlesEnabled = index >= 0
         val caption = subtitles.getOrNull(index)
@@ -519,7 +574,155 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         if (rememberSubtitleByChannel) playerPreferences.edit().putInt(subtitleChannelKey, index).apply()
     }
     LaunchedEffect(subtitles, selectedSubtitleIndex) {
-        if (subtitles.isNotEmpty()) selectSubtitle(selectedSubtitleIndex.takeIf { it in subtitles.indices } ?: -1)
+        if (subtitles.isNotEmpty()) {
+            val channelTrackWasSaved = rememberSubtitleByChannel && playerPreferences.contains(subtitleChannelKey)
+            val preferredIndex = if (preferredSubtitleLanguage != "auto") subtitles.indexOfFirst { it.language?.id.equals(preferredSubtitleLanguage, true) }.takeIf { it >= 0 } else null
+            val desired = when {
+                channelTrackWasSaved -> selectedSubtitleIndex.takeIf { it in subtitles.indices } ?: -1
+                preferredIndex != null -> preferredIndex
+                subtitlesEnabledByDefault -> 0
+                else -> -1
+            }
+            if (selectedSubtitleIndex != desired || subtitlesEnabled != (desired >= 0)) selectSubtitle(desired)
+        }
+    }
+    LaunchedEffect(uuid, server, commentsPanelOpen) {
+        if (!commentsPanelOpen || commentsLoaded || uuid.isNullOrBlank()) return@LaunchedEffect
+        commentsLoading = true
+        commentsError = null
+        val result = runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, 0, 20) } }
+        result.onSuccess { body ->
+            commentsTotal = body.get("total")?.asInt ?: 0
+            comments = body.getAsJsonArray("data")?.mapNotNull { element ->
+                val comment = element.asJsonObject.getAsJsonObject("comment") ?: return@mapNotNull null
+                val text = comment.get("text")?.asString.orEmpty().replace(Regex("<[^>]*>"), " ").trim()
+                if (text.isBlank()) return@mapNotNull null
+                val account = comment.getAsJsonObject("account")
+                val author = account?.get("displayName")?.asString?.takeIf(String::isNotBlank)
+                    ?: account?.get("name")?.asString.orEmpty()
+                author to text
+            }.orEmpty()
+        }.onFailure { commentsError = it.localizedMessage ?: it.javaClass.simpleName }
+        commentsLoaded = result.isSuccess
+        commentsLoading = false
+    }
+    fun loadMoreComments() {
+        if (commentsLoading || comments.size >= commentsTotal || uuid.isNullOrBlank()) return
+        panelScope.launch {
+            commentsLoading = true
+            val nextStart = commentsStart + 20
+            runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, nextStart, 20) } }
+                .onSuccess { body ->
+                    commentsStart = nextStart
+                    commentsTotal = body.get("total")?.asInt ?: commentsTotal
+                    val next = body.getAsJsonArray("data")?.mapNotNull { element ->
+                        val comment = element.asJsonObject.getAsJsonObject("comment") ?: return@mapNotNull null
+                        val text = comment.get("text")?.asString.orEmpty().replace(Regex("<[^>]*>"), " ").trim()
+                        if (text.isBlank()) return@mapNotNull null
+                        val account = comment.getAsJsonObject("account")
+                        (account?.get("displayName")?.asString ?: account?.get("name")?.asString.orEmpty()) to text
+                    }.orEmpty()
+                    comments = comments + next
+                    commentsError = null
+                }.onFailure { commentsError = it.localizedMessage ?: it.javaClass.simpleName }
+            commentsLoading = false
+        }
+    }
+    fun startSubtitleTranslation(enable: Boolean) {
+        translationJob?.cancel()
+        translationPreparing = false
+        translationError = null
+        if (!enable) {
+            subtitleTranslationEnabled = false
+            translatedCues.clear()
+            sourceSubtitleCues.clear()
+            if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)
+            else player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+            return
+        }
+        val sourceCaption = subtitles.getOrNull(selectedSubtitleIndex)
+            ?: subtitles.firstOrNull { it.language?.id.equals(preferredSubtitleLanguage, true) }
+            ?: subtitles.firstOrNull()
+        if (sourceCaption == null) {
+            translationError = context.getString(R.string.subtitle_translation_no_source)
+            subtitleTranslationEnabled = false
+            translatedCues.clear()
+            if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)
+            return
+        }
+        if (sourceCaption.language?.id?.substringBefore('-').equals(subtitleTranslationLanguage, true)) {
+            translationError = context.getString(R.string.subtitle_translation_same_language)
+            subtitleTranslationEnabled = false
+            if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)
+            return
+        }
+        subtitleTranslationEnabled = true
+        translatedCues.clear()
+        translationProgress = 0
+        translationTotal = 0
+        translationPreparing = true
+        translationJob = panelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    translateSubtitleFile(
+                        context = context,
+                        server = server,
+                        caption = sourceCaption,
+                        targetLanguage = subtitleTranslationLanguage,
+                        onProgress = { done, total ->
+                            panelScope.launch(Dispatchers.Main) {
+                                translationProgress = done
+                                translationTotal = total
+                                translationPreparing = false
+                            }
+                        },
+                        onCuesLoaded = { cues ->
+                            panelScope.launch(Dispatchers.Main) {
+                                sourceSubtitleCues.clear()
+                                sourceSubtitleCues.addAll(cues)
+                                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+                                translationPreparing = false
+                            }
+                        },
+                        onBatchTranslated = { batch ->
+                            panelScope.launch(Dispatchers.Main) {
+                                translatedCues.addAll(batch)
+                                translationPreparing = false
+                            }
+                        }
+                    )
+                }
+            }.onSuccess { cues ->
+                translationPreparing = false
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                subtitleTranslationEnabled = false
+                translationPreparing = false
+                translationError = error.localizedMessage ?: context.getString(R.string.subtitle_translation_failed)
+                translatedCues.clear()
+                sourceSubtitleCues.clear()
+                if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)
+            }
+        }
+    }
+    LaunchedEffect(subtitles, selectedSubtitleIndex, subtitleTranslationLanguage) {
+        if (autoTranslationConsidered || subtitles.isEmpty()) return@LaunchedEffect
+        autoTranslationConsidered = true
+        val selectedCaption = subtitles.getOrNull(selectedSubtitleIndex)?.takeIf { !it.language?.id.isNullOrBlank() }
+        val sourceIndex = selectedCaption?.let(subtitles::indexOf)
+            ?.takeIf { it >= 0 }
+            ?: subtitles.indexOfFirst { !it.language?.id.isNullOrBlank() }
+        if (sourceIndex < 0) return@LaunchedEffect
+        val sourceLanguage = subtitles[sourceIndex].language?.id?.substringBefore('-')
+        if (sourceLanguage.equals(subtitleTranslationLanguage, ignoreCase = true)) {
+            if (selectedSubtitleIndex >= 0 && selectedSubtitleIndex != sourceIndex) selectSubtitle(sourceIndex)
+        } else {
+            if (selectedSubtitleIndex != sourceIndex) selectSubtitle(sourceIndex)
+            startSubtitleTranslation(true)
+        }
     }
     val videoTrackGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
     val audioTrackGroups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
@@ -631,13 +834,49 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     else -> true
                 }
             } else if (subtitlePanelOpen) {
-                val lastRow = subtitles.size + 2
+                val lastRow = subtitles.size + 8
+                val subtitleLanguages = listOf("auto") + subtitles.mapNotNull { it.language?.id }.distinct()
+                val translationLanguages = listOf(interfaceTranslationLanguage) + subtitleTranslationLanguageCodes().filter { it != interfaceTranslationLanguage }.sorted()
+                fun adjustCurrentSubtitleSetting(direction: Int) {
+                    when (subtitlePanelRow) {
+                        subtitles.size + 2 -> {
+                            val colors = listOf("white", "yellow", "cyan", "green")
+                            subtitleColor = colors.cyclicNext(subtitleColor, direction)
+                            playerPreferences.edit().putString("subtitleColor", subtitleColor).apply()
+                            playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor)
+                        }
+                        subtitles.size + 3 -> {
+                            val sizes = listOf(.04f, .053f, .065f)
+                            subtitleSize = sizes.cyclicNext(subtitleSize, direction)
+                            playerPreferences.edit().putFloat("subtitleSize", subtitleSize).apply()
+                            playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor)
+                        }
+                        subtitles.size + 4 -> {
+                            subtitleHorizontalPosition = (subtitleHorizontalPosition + direction * .05f).coerceIn(.05f, .95f)
+                            playerPreferences.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontalPosition).apply()
+                            playerSurfaceView?.setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition)
+                        }
+                        subtitles.size + 5 -> adjustSubtitleBottomOffset(direction * .02f)
+                        subtitles.size + 6 -> {
+                            val current = playerPreferences.getString("preferredSubtitleLanguage", "auto") ?: "auto"
+                            val language = subtitleLanguages.cyclicNext(current, direction)
+                            playerPreferences.edit().putString("preferredSubtitleLanguage", language).apply()
+                            subtitles.indexOfFirst { it.language?.id.equals(language, true) }.takeIf { language != "auto" && it >= 0 }?.let(::selectSubtitle)
+                        }
+                        subtitles.size + 7 -> {
+                            subtitleTranslationLanguage = translationLanguages.cyclicNext(subtitleTranslationLanguage, direction)
+                            playerPreferences.edit().putString("subtitleTranslationLanguage", subtitleTranslationLanguage).putBoolean("subtitleTranslationLanguageCustom", true).apply()
+                            if (subtitleTranslationEnabled) startSubtitleTranslation(true)
+                        }
+                        subtitles.size + 8 -> startSubtitleTranslation(!subtitleTranslationEnabled)
+                    }
+                }
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> { subtitlePanelRow = (subtitlePanelRow - 1).coerceAtLeast(0); true }
                     KeyEvent.KEYCODE_DPAD_DOWN -> { subtitlePanelRow = (subtitlePanelRow + 1).coerceAtMost(lastRow); true }
                     KeyEvent.KEYCODE_DPAD_LEFT -> {
                         if (event.nativeKeyEvent.repeatCount == 0) {
-                            if (subtitlePanelRow == lastRow) adjustSubtitleBottomOffset(-0.02f)
+                            if (subtitlePanelRow >= subtitles.size + 2) adjustCurrentSubtitleSetting(-1)
                             else if (subtitlePanelRow == 0) selectSubtitle(-1)
                             else if (subtitlePanelRow in 1..subtitles.size) selectSubtitle(subtitlePanelRow - 1)
                             else { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
@@ -645,7 +884,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT -> {
                         if (event.nativeKeyEvent.repeatCount == 0) {
-                            if (subtitlePanelRow == lastRow) adjustSubtitleBottomOffset(0.02f)
+                            if (subtitlePanelRow >= subtitles.size + 2) adjustCurrentSubtitleSetting(1)
                             else if (subtitlePanelRow == 0) selectSubtitle(-1)
                             else if (subtitlePanelRow in 1..subtitles.size) selectSubtitle(subtitlePanelRow - 1)
                             else { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
@@ -656,7 +895,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                             0 -> selectSubtitle(-1)
                             in 1..subtitles.size -> selectSubtitle(subtitlePanelRow - 1)
                             subtitles.size + 1 -> { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }
-                            else -> adjustSubtitleBottomOffset(0.02f)
+                            else -> adjustCurrentSubtitleSetting(1)
                         }
                         true
                     }
@@ -666,7 +905,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 }
             } else if (infoPanelOpen) {
                 when (event.nativeKeyEvent.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> { infoPanelChannelFocused = !infoPanelChannelFocused; true }
+                    KeyEvent.KEYCODE_DPAD_UP -> { panelScope.launch { infoScrollState.scrollTo((infoScrollState.value - 180).coerceAtLeast(0)) }; infoPanelChannelFocused = false; true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { panelScope.launch { val target = (infoScrollState.value + 180).coerceAtMost(infoScrollState.maxValue); infoScrollState.scrollTo(target); infoPanelChannelFocused = target >= infoScrollState.maxValue && infoScrollState.maxValue > 0 }; true }
                     KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { infoPanelOpen = false; showControls(); true }
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
                         if (infoPanelChannelFocused) runCatching {
@@ -676,6 +916,15 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                         }
                         true
                     }
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.nativeKeyEvent.repeatCount == 0) { if (player.isPlaying) player.pause() else player.play() }; true }
+                    else -> true
+                }
+            } else if (commentsPanelOpen) {
+                when (event.nativeKeyEvent.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> { commentsPanelRow = (commentsPanelRow - 1).coerceAtLeast(0); panelScope.launch { commentsScrollState.scrollTo((commentsScrollState.value - 180).coerceAtLeast(0)) }; true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { commentsPanelRow++; panelScope.launch { commentsScrollState.scrollTo((commentsScrollState.value + 180).coerceAtMost(commentsScrollState.maxValue)) }; true }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> { if (commentsPanelRow >= comments.size) loadMoreComments(); true }
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_DPAD_LEFT -> { commentsPanelOpen = false; showControls(); true }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.nativeKeyEvent.repeatCount == 0) { if (player.isPlaying) player.pause() else player.play() }; true }
                     else -> true
                 }
@@ -704,7 +953,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (controlsVisible) { focusedControlIndex = -1; progressFocused = true; showControls() }
+                    if (controlsVisible) { focusedControlIndex = -1; progressFocused = false; controlsVisible = false; controlsInteractionToken++ }
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
@@ -730,12 +979,41 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 isFocusableInTouchMode = false
                 setShutterBackgroundColor(android.graphics.Color.BLACK)
                 val subtitleSize = playerPreferences.getFloat("subtitleSize", 0.053f)
-                val foreground = if (playerPreferences.getString("subtitleStyle", "default") == "yellow") android.graphics.Color.YELLOW else android.graphics.Color.WHITE
-                subtitleView?.setFractionalTextSize(subtitleSize)
-                subtitleView?.setBottomPaddingFraction(subtitleBottomOffset)
-                subtitleView?.setStyle(CaptionStyleCompat(foreground, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
+                setSubtitleAppearance(subtitleSize, subtitleColor)
+                setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition)
             }
-        }, update = { playerView -> playerView.subtitleView?.setBottomPaddingFraction(subtitleBottomOffset) }, modifier = Modifier.fillMaxSize())
+        }, update = { playerView -> (playerView as? RemotePlayerView)?.apply { setSubtitleAppearance(subtitleSize, subtitleColor); setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition) } }, modifier = Modifier.fillMaxSize())
+        if (subtitleTranslationEnabled) {
+            val currentCue = translatedCues.firstOrNull { playerPosition >= it.startMs && playerPosition <= it.endMs }
+                ?: sourceSubtitleCues.firstOrNull { playerPosition >= it.startMs && playerPosition <= it.endMs }
+            currentCue?.let { cue ->
+                val height = (playerSurfaceView?.height ?: 1080).toFloat()
+                val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
+                val captionColor = when (subtitleColor) { "yellow" -> Color.Yellow; "cyan" -> Color.Cyan; "green" -> Color.Green; else -> Color.White }
+                val captionModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(.9f)
+                    .graphicsLayer {
+                        translationX = (playerSurfaceView?.width ?: 0) * (subtitleHorizontalPosition - .5f)
+                        translationY = -(playerSurfaceView?.height ?: 0) * subtitleBottomOffset
+                    }
+                Text(
+                    cue.text,
+                    color = Color.Black,
+                    fontSize = (height * subtitleSize / density).sp,
+                    lineHeight = (height * subtitleSize * 1.2f / density).sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    style = MaterialTheme.typography.bodyLarge.copy(drawStyle = Stroke(width = 3.5f)),
+                    modifier = captionModifier
+                )
+                Text(
+                    cue.text,
+                    color = captionColor,
+                    fontSize = (height * subtitleSize / density).sp,
+                    lineHeight = (height * subtitleSize * 1.2f / density).sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = captionModifier
+                )
+            }
+        }
         if (isBuffering && playbackError == null) CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center), color = Color.White)
         playbackError?.let { Text(it, color = Color.White, modifier = Modifier.align(androidx.compose.ui.Alignment.Center).padding(24.dp)) }
         videoUnavailableReason?.let { reason ->
@@ -767,7 +1045,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     .padding(horizontal = 42.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(title, style = MaterialTheme.typography.headlineMedium, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                TranslatedVideoMetadataText(title, style = MaterialTheme.typography.headlineMedium, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val metadata = buildList {
                     add(channelDisplayName ?: channelName ?: context.getString(R.string.channel_unknown))
                     add(context.getString(R.string.video_views, views.toString()))
@@ -781,12 +1059,13 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     2 -> R.string.player_control_forward
                     3 -> R.string.player_control_repeat
                     4 -> R.string.player_control_speed
-                    else -> when (controlActions.getOrNull(focusedControlIndex)) {
+                        else -> when (controlActions.getOrNull(focusedControlIndex)) {
                         5 -> R.string.player_subtitles
                         6 -> if (isSubscribed) R.string.unsubscribe else R.string.subscribe
                         7 -> if (isFavorite) R.string.remove_favorite else R.string.add_favorite
                         8 -> R.string.player_quality_title
                         9 -> R.string.video_info
+                        10 -> R.string.player_comments
                         else -> null
                     }
                 }
@@ -799,19 +1078,19 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     )
                 }
 
-                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     PlayerControl("↶", "Seek backward ${seekStepSeconds} seconds", selected = focusedControlIndex == controlActions.indexOf(0)) { activateControl(0) }
                     PlayerControl(if (playbackActive) "Ⅱ" else "▶", if (playbackActive) "Pause" else "Play", large = true, selected = focusedControlIndex == controlActions.indexOf(1)) { activateControl(1) }
                     PlayerControl("↷", "Seek forward ${seekStepSeconds} seconds", selected = focusedControlIndex == controlActions.indexOf(2)) { activateControl(2) }
                     PlayerControl("↻${if (repeatVideo) "✓" else ""}", "Repeat", selected = focusedControlIndex == controlActions.indexOf(3)) { activateControl(3) }
                     PlayerControl("${playbackSpeed}×", "Playback speed", selected = focusedControlIndex == controlActions.indexOf(4)) { activateControl(4) }
-                    PlayerControl("▤", "Subtitles", selected = focusedControlIndex == controlActions.indexOf(5)) { activateControl(5) }
+                    PlayerControl("CC", "Subtitles", selected = focusedControlIndex == controlActions.indexOf(5)) { activateControl(5) }
                     if (!channelName.isNullOrBlank()) PlayerControl(if (isSubscribed) "✓" else "＋", "Subscribe", selected = focusedControlIndex == controlActions.indexOf(6)) { activateControl(6) }
                     if (!uuid.isNullOrBlank()) PlayerControl(if (isFavorite) "♥✓" else "♥", "Favorite", selected = focusedControlIndex == controlActions.indexOf(7)) { activateControl(7) }
                     PlayerControl("HQ", "Playback quality settings", selected = focusedControlIndex == controlActions.indexOf(8)) { activateControl(8) }
                     if (!uuid.isNullOrBlank()) PlayerControl("ⓘ", "Video information", selected = focusedControlIndex == controlActions.indexOf(9)) { activateControl(9) }
-                    Spacer(Modifier.weight(1f))
-                    Text("${formatPlayerTime(playerPosition)} / ${formatPlayerTime(player.duration)}", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    if (!uuid.isNullOrBlank()) PlayerIconControl(Icons.Outlined.ChatBubbleOutline, "Comments", selected = focusedControlIndex == controlActions.indexOf(10)) { activateControl(10) }
+                    Text("${formatPlayerTime(playerPosition)}/${formatPlayerTime(player.duration)}", modifier = Modifier.widthIn(min = 58.dp).padding(start = 4.dp), color = Color.White, fontSize = 12.sp, maxLines = 1, softWrap = false)
                 }
                 val duration = player.duration.takeIf { it > 0L } ?: 1L
                 Slider(value = (playerPosition.toFloat() / duration).coerceIn(0f, 1f), onValueChange = { playerPosition = (it * duration).toLong(); showControls() }, onValueChangeFinished = { player.seekTo(playerPosition) }, modifier = Modifier.fillMaxWidth()
@@ -868,7 +1147,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         if (subtitlePanelOpen) {
             Column(
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.34f)
-                    .background(Color(0xF21A1A1A)).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 26.dp),
+                    .background(Color(0xF21A1A1A)).verticalScroll(subtitlePanelScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(stringResource(R.string.player_subtitles), color = Color.White, style = MaterialTheme.typography.headlineSmall)
@@ -892,24 +1171,51 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 TextButton(onClick = { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == rememberRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
                     Text("${stringResource(R.string.subtitle_remember_channel)}  ${if (rememberSubtitleByChannel) "✓" else "○"}", color = Color.White, modifier = Modifier.fillMaxWidth())
                 }
-                val positionRow = subtitles.size + 2
-                TextButton(onClick = { adjustSubtitleBottomOffset(0.02f) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == positionRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                val colorRow = subtitles.size + 2
+                val sizeRow = subtitles.size + 3
+                val horizontalRow = subtitles.size + 4
+                val verticalRow = subtitles.size + 5
+                val languageRow = subtitles.size + 6
+                val subtitleColorLabel = when (subtitleColor) { "yellow" -> stringResource(R.string.subtitle_color_yellow); "cyan" -> stringResource(R.string.subtitle_color_cyan); "green" -> stringResource(R.string.subtitle_color_green); else -> stringResource(R.string.subtitle_color_white) }
+                TextButton(onClick = { subtitleColor = listOf("white", "yellow", "cyan", "green").cyclicNext(subtitleColor, 1); playerPreferences.edit().putString("subtitleColor", subtitleColor).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == colorRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_color)}: $subtitleColorLabel", color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { subtitleSize = listOf(.04f, .053f, .065f).cyclicNext(subtitleSize, 1); playerPreferences.edit().putFloat("subtitleSize", subtitleSize).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == sizeRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_size)}: ${(subtitleSize * 100).toInt()}%", color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { subtitleHorizontalPosition = (subtitleHorizontalPosition + .05f).coerceAtMost(.95f); playerPreferences.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontalPosition).apply(); playerSurfaceView?.setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == horizontalRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_horizontal_position)}: ${(subtitleHorizontalPosition * 100).toInt()}%", color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { adjustSubtitleBottomOffset(0.02f) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == verticalRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
                     Text(stringResource(R.string.subtitle_position_from_bottom, (subtitleBottomOffset * 100).toInt()), color = Color.White, modifier = Modifier.fillMaxWidth())
                 }
+                val languageCode = playerPreferences.getString("preferredSubtitleLanguage", "auto") ?: "auto"
+                val languageLabel = subtitles.firstOrNull { it.language?.id.equals(languageCode, true) }?.language?.label ?: languageCode.uppercase()
+                TextButton(onClick = { val next = (listOf("auto") + subtitles.mapNotNull { it.language?.id }.distinct()).cyclicNext(languageCode, 1); playerPreferences.edit().putString("preferredSubtitleLanguage", next).apply(); subtitles.indexOfFirst { it.language?.id.equals(next, true) }.takeIf { next != "auto" && it >= 0 }?.let(::selectSubtitle) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == languageRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_language)}: $languageLabel", color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                val translationLanguageLabel = translationLanguageName(subtitleTranslationLanguage)
+                val orderedTranslationLanguages = listOf(interfaceTranslationLanguage) + subtitleTranslationLanguageCodes().filter { it != interfaceTranslationLanguage }.sorted()
+                TextButton(onClick = { subtitleTranslationLanguage = orderedTranslationLanguages.cyclicNext(subtitleTranslationLanguage, 1); playerPreferences.edit().putString("subtitleTranslationLanguage", subtitleTranslationLanguage).putBoolean("subtitleTranslationLanguageCustom", true).apply(); if (subtitleTranslationEnabled) startSubtitleTranslation(true) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 7) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_translate_to)}: $translationLanguageLabel", color = Color.White, modifier = Modifier.fillMaxWidth())
+                }
+                TextButton(onClick = { startSubtitleTranslation(!subtitleTranslationEnabled) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 8) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_translation)}: ${if (subtitleTranslationEnabled) stringResource(R.string.translation_on) else stringResource(R.string.translation_off)}", color = Color.White, modifier = Modifier.fillMaxWidth())
+                }
+                Text(stringResource(R.string.subtitle_translation_hint), color = Color.White.copy(alpha = .65f), style = MaterialTheme.typography.bodySmall)
+                if (translationPreparing) Text(stringResource(R.string.subtitle_translation_preparing), color = Color.White.copy(alpha = .75f))
+                else if (translationJob?.isActive == true) Text(stringResource(R.string.subtitle_translation_progress, translationProgress, translationTotal), color = Color.White.copy(alpha = .75f))
+                translationError?.let { Text(it, color = Color(0xFFFFB4AB)) }
             }
         }
         if (infoPanelOpen) {
             Column(
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.38f)
-                    .background(Color(0xF21A1A1A)).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 26.dp),
+                    .background(Color(0xF21A1A1A)).verticalScroll(infoScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall)
+                TranslatedVideoMetadataText(title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(channelDisplayName ?: channelName ?: stringResource(R.string.channel_unknown), color = Color.White.copy(alpha = .8f), style = MaterialTheme.typography.titleMedium)
                 Text(stringResource(R.string.video_views, views.toString()), color = Color.White.copy(alpha = .8f))
                 formatPublishedDate(publishedAt)?.let { Text(stringResource(R.string.video_published, it), color = Color.White.copy(alpha = .8f)) }
                 HorizontalDivider(color = Color.White.copy(alpha = .3f))
-                Text(description.ifBlank { stringResource(R.string.player_info_unavailable) }, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                if (description.isBlank()) {
+                    Text(stringResource(R.string.player_info_unavailable), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
+                } else {
+                    TranslatedVideoMetadataText(description, color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
+                }
                 Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = {
@@ -921,15 +1227,43 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 ) { Text(stringResource(R.string.open_channel_video_page), color = Color.White, modifier = Modifier.fillMaxWidth()) }
             }
         }
+        if (commentsPanelOpen) {
+            Column(
+                Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.38f)
+                    .background(Color(0xF21A1A1A)).verticalScroll(commentsScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(stringResource(R.string.player_comments), color = Color.White, style = MaterialTheme.typography.headlineSmall)
+                if (commentsLoading && comments.isEmpty()) Text(stringResource(R.string.player_comments_loading), color = Color.White.copy(alpha = .75f))
+                commentsError?.let { Text(stringResource(R.string.player_comments_error, it), color = Color(0xFFFFB4AB)) }
+                comments.forEachIndexed { index, (author, body) ->
+                    Column(Modifier.fillMaxWidth().background(if (commentsPanelRow == index) Color(0x663F3F3F) else Color.Transparent, RoundedCornerShape(8.dp)).padding(10.dp)) {
+                        Text(author.ifBlank { stringResource(R.string.channel_unknown) }, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text(body, color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                if (commentsTotal == 0 && !commentsLoading && commentsError == null) Text(stringResource(R.string.player_comments_empty), color = Color.White.copy(alpha = .75f))
+                if (comments.size < commentsTotal) TextButton(onClick = { loadMoreComments() }, modifier = Modifier.background(if (commentsPanelRow >= comments.size) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text(stringResource(R.string.player_comments_more), color = Color.White) }
+            }
+        }
     }
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 }
 
 @Composable private fun PlayerControl(label: String, description: String, large: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.heightIn(min = if (large) 64.dp else 52.dp)
+    TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp), modifier = Modifier.width(42.dp).heightIn(min = if (large) 52.dp else 48.dp)
         .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
         .semantics { contentDescription = description }) {
-        Text(label, color = Color.White, fontSize = if (large) 30.sp else 20.sp, maxLines = 1)
+        Text(label, color = Color.White, fontSize = if (large) 26.sp else if (label == "CC") 15.sp else 20.sp, maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable private fun PlayerIconControl(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, selected: Boolean = false, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(42.dp)
+        .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(12.dp))
+        .semantics { contentDescription = description }) {
+        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(21.dp))
     }
 }
 
@@ -975,6 +1309,45 @@ private fun readSavedSubscriptions(context: Context): List<VideoSubscription> {
 }
 
 private class RemotePlayerView(context: Context) : PlayerView(context) {
+    private var subtitleOffsetFromBottom = 0.20f
+    private var subtitleHorizontalPosition = 0.50f
+
+    fun setSubtitleOffsetFromBottom(fraction: Float) {
+        subtitleOffsetFromBottom = fraction.coerceIn(0.02f, 0.50f)
+        applySubtitleOffset()
+    }
+
+    fun setSubtitlePosition(bottom: Float, horizontal: Float) {
+        subtitleOffsetFromBottom = bottom.coerceIn(0.02f, 0.50f)
+        subtitleHorizontalPosition = horizontal.coerceIn(0.05f, 0.95f)
+        applySubtitleOffset()
+    }
+
+    fun setSubtitleAppearance(fraction: Float, colorName: String) {
+        val color = when (colorName) {
+            "yellow" -> android.graphics.Color.YELLOW
+            "cyan" -> android.graphics.Color.CYAN
+            "green" -> android.graphics.Color.GREEN
+            else -> android.graphics.Color.WHITE
+        }
+        subtitleView?.setFractionalTextSize(fraction)
+        subtitleView?.setStyle(CaptionStyleCompat(color, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        applySubtitleOffset()
+    }
+
+    private fun applySubtitleOffset() {
+        subtitleView?.let { view ->
+            // Translate the entire cue layer so this also works for subtitles with
+            // an explicit WebVTT/TTML line position that ignores bottom padding.
+            view.setBottomPaddingFraction(0f)
+            view.translationY = -height * subtitleOffsetFromBottom
+            view.translationX = width * (subtitleHorizontalPosition - 0.5f)
+        }
+    }
 }
 
 @Composable private fun PlayerClock(size: String, backdrop: String, is24Hour: Boolean, modifier: Modifier = Modifier) {

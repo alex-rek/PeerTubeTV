@@ -32,7 +32,8 @@ data class SearchSettings(
     val order: List<SearchSource> = SearchSource.entries.toList(),
     val mode: String = "hybrid", val sufficientResults: Int = 30,
     val maxParallel: Int = 3, val timeoutMs: Long = 12_000,
-    val customIndexUrls: List<String> = emptyList(), val availabilityFilter: String = "unknown_or_available"
+    val customIndexUrls: List<String> = emptyList(), val availabilityFilter: String = "unknown_or_available",
+    val includeSensitive: Boolean = false, val sensitiveDisplayMode: String = "blur"
 )
 
 class SearchSettingsRepository(context: Context) {
@@ -48,7 +49,9 @@ class SearchSettingsRepository(context: Context) {
             sufficientResults = prefs.getInt("searchSufficientResults", 30).coerceIn(5, 100),
             maxParallel = prefs.getInt("searchMaxParallel", 3).coerceIn(1, 6),
             timeoutMs = prefs.getLong("searchTimeoutMs", 12_000L).coerceIn(3_000L, 30_000L),
-            customIndexUrls = custom, availabilityFilter = prefs.getString("availabilityFilter", "unknown_or_available")!!
+            customIndexUrls = custom, availabilityFilter = prefs.getString("availabilityFilter", "unknown_or_available")!!,
+            includeSensitive = prefs.getBoolean("searchIncludeSensitive", false),
+            sensitiveDisplayMode = prefs.getString("sensitiveDisplayMode", "blur")!!.takeIf { it in setOf("hide", "blur", "warning", "show") } ?: "blur"
         )
     }
     fun setEnabled(source: SearchSource, enabled: Boolean) {
@@ -61,6 +64,8 @@ class SearchSettingsRepository(context: Context) {
     fun setSufficientResults(value: Int) = prefs.edit().putInt("searchSufficientResults", value.coerceIn(5, 100)).apply()
     fun setCustomIndexUrls(urls: List<String>) = prefs.edit().putString("customSearchIndexes", Gson().toJson(urls.map(String::trim).filter(String::isNotBlank).distinct().take(10))).apply()
     fun setAvailabilityFilter(value: String) = prefs.edit().putString("availabilityFilter", value.takeIf { it in setOf("all", "unknown_or_available", "available_only") } ?: "unknown_or_available").apply()
+    fun setIncludeSensitive(value: Boolean) = prefs.edit().putBoolean("searchIncludeSensitive", value).apply()
+    fun setSensitiveDisplayMode(value: String) = prefs.edit().putString("sensitiveDisplayMode", value.takeIf { it in setOf("hide", "blur", "warning", "show") } ?: "blur").apply()
 }
 
 data class SearchBatch(val videos: List<Video>, val total: Int? = null, val nextPage: Int? = null)
@@ -68,7 +73,7 @@ data class SearchOutcome(val videos: List<Video>, val sourcesByVideo: Map<String
 data class SearchRequest(
     val query: String, val page: Int, val pageSize: Int, val sort: String = "-match", val category: Int? = null,
     val durationMin: Int? = null, val durationMax: Int? = null, val liveOnly: Boolean = false,
-    val language: String? = null, val country: String? = null, val activeServer: String
+    val language: String? = null, val country: String? = null, val activeServer: String, val includeSensitive: Boolean = false
 )
 
 class SearchAggregator(private val providers: Map<SearchSource, suspend (SearchRequest) -> SearchBatch>) {
@@ -88,7 +93,9 @@ class SearchAggregator(private val providers: Map<SearchSource, suspend (SearchR
         when (settings.mode) {
             "sequential" -> for (source in sources) {
                 call(source)?.let(batches::add)
-                if (batches.sumOf { it.second.videos.size } >= pageSize) break
+                // A full page of regular videos does not satisfy an NSFW-enabled
+                // search: the sensitive matches may only exist in a later source.
+                if (!request.includeSensitive && batches.sumOf { it.second.videos.size } >= pageSize) break
             }
             "parallel" -> {
                 val semaphore = Semaphore(settings.maxParallel)
@@ -100,7 +107,7 @@ class SearchAggregator(private val providers: Map<SearchSource, suspend (SearchR
             else -> {
                 for (source in sources) {
                     call(source)?.let(batches::add)
-                    if (batches.sumOf { it.second.videos.size } >= settings.sufficientResults) break
+                    if (!request.includeSensitive && batches.sumOf { it.second.videos.size } >= settings.sufficientResults) break
                 }
             }
         }

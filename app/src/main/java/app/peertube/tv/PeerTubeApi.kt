@@ -26,7 +26,7 @@ data class LiveVideoSession(val startDate: String? = null, val endDate: String? 
 data class CaptionPage(val data: List<VideoCaption> = emptyList())
 data class VideoCaption(val language: CaptionLanguage? = null, val fileUrl: String? = null, val captionPath: String? = null, val automaticallyGenerated: Boolean? = null)
 data class CaptionLanguage(val id: String? = null, val label: String? = null)
-data class Video(val uuid: String, val name: String, val description: String? = "", val thumbnailPath: String? = null, val thumbnailUrl: String? = null, val views: Long = 0, val duration: Long = 0, val tags: List<String>? = null, val channel: Channel? = null, val account: Account? = null, val host: String? = null, val url: String? = null, val files: List<VideoFile>? = null, val streamingPlaylists: List<StreamingPlaylist>? = null, val publishedAt: String? = null, val isLive: Boolean? = null, val state: VideoState? = null, val category: VideoCategory? = null) {
+data class Video(val uuid: String, val name: String, val description: String? = "", val thumbnailPath: String? = null, val thumbnailUrl: String? = null, val views: Long = 0, val duration: Long = 0, val tags: List<String>? = null, val channel: Channel? = null, val account: Account? = null, val host: String? = null, val url: String? = null, val files: List<VideoFile>? = null, val streamingPlaylists: List<StreamingPlaylist>? = null, val publishedAt: String? = null, val isLive: Boolean? = null, val state: VideoState? = null, val category: VideoCategory? = null, val nsfw: Boolean = false) {
     private fun allMediaFiles(): List<VideoFile> = files.orEmpty() + streamingPlaylists.orEmpty().flatMap { it.files.orEmpty() }
 
     fun isAudioOnlySource(): Boolean {
@@ -74,7 +74,7 @@ data class VideoCategory(val id: Int? = null, val label: String? = null)
 
 interface PeerTubeApi {
     @GET("api/v1/videos") suspend fun videos(@Query("sort") sort: String = "-publishedAt", @Query("count") count: Int = 30, @Query("search") search: String? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null): VideoPage
-    @GET("api/v1/search/videos") suspend fun searchVideos(@Query("search") search: String, @Query("start") start: Int = 0, @Query("count") count: Int = 40, @Query("sort") sort: String? = "-match"): VideoPage
+    @GET("api/v1/search/videos") suspend fun searchVideos(@Query("search") search: String, @Query("start") start: Int = 0, @Query("count") count: Int = 40, @Query("sort") sort: String? = "-match", @Query("nsfw") includeSensitive: Boolean? = null): VideoPage
     @GET("api/v1/server/following") suspend fun serverFollowing(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/server/followers") suspend fun serverFollowers(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/video-channels") suspend fun videoChannels(@Query("start") start: Int = 0, @Query("count") count: Int = 100): PeerTubeChannelPage
@@ -82,6 +82,7 @@ interface PeerTubeApi {
     @GET("api/v1/videos/{id}") suspend fun video(@Path("id") id: String): Video
     @GET("api/v1/videos/{id}/live-session") suspend fun liveSession(@Path("id") id: String): LiveVideoSession
     @GET("api/v1/videos/{id}/captions") suspend fun captions(@Path("id") id: String): CaptionPage
+    @GET("api/v1/videos/{id}/comment-threads") suspend fun commentThreads(@Path("id") id: String, @Query("start") start: Int = 0, @Query("count") count: Int = 20, @Query("sort") sort: String = "-createdAt"): com.google.gson.JsonObject
 }
 
 data class InstancePage(val total: Int = 0, val data: List<PeerTubeInstance> = emptyList())
@@ -100,7 +101,7 @@ interface PeerTubeConfigApi {
 }
 
 interface SepiaSearchApi {
-    @GET("api/v1/search/videos") suspend fun videos(@Query("search") search: String? = null, @Query("start") start: Int = 0, @Query("count") count: Int = 30, @Query("sort") sort: String? = null, @Query("categoryOneOf") categoryOneOf: Int? = null, @Query("durationMin") durationMin: Int? = null, @Query("durationMax") durationMax: Int? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null): VideoPage
+    @GET("api/v1/search/videos") suspend fun videos(@Query("search") search: String? = null, @Query("start") start: Int = 0, @Query("count") count: Int = 30, @Query("sort") sort: String? = null, @Query("categoryOneOf") categoryOneOf: Int? = null, @Query("durationMin") durationMin: Int? = null, @Query("durationMax") durationMax: Int? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("nsfw") includeSensitive: Boolean? = null): VideoPage
 }
 
 data class PeerSeekPage(val videos: List<PeerSeekVideo> = emptyList(), val total: Int = 0, val page: Int = 1, val size: Int = 24)
@@ -110,7 +111,7 @@ data class PeerSeekVideo(
     val isLive: Boolean? = null, val views: Long? = null, val durationSeconds: Long? = null,
     val publishedAt: String? = null, val instance: com.google.gson.JsonElement? = null,
     val channel: com.google.gson.JsonElement? = null, val account: com.google.gson.JsonElement? = null, val tags: List<String>? = null
-    , val category: com.google.gson.JsonElement? = null
+    , val category: com.google.gson.JsonElement? = null, val nsfw: Boolean = false
 ) {
     fun asVideo(): Video? {
         val videoId = uuid?.takeIf(String::isNotBlank) ?: id?.takeIf(String::isNotBlank) ?: return null
@@ -142,6 +143,7 @@ data class PeerSeekVideo(
             host = host,
             url = videoUrl?.takeIf(String::isNotBlank),
             isLive = isLive,
+            nsfw = nsfw,
             category = category?.takeIf { !it.isJsonNull }?.let { element ->
                 if (element.isJsonPrimitive) VideoCategory(id = element.asString.toIntOrNull(), label = element.asString.takeUnless { it.toIntOrNull() != null })
                 else if (element.isJsonObject) VideoCategory(id = element.asJsonObject.get("id")?.asInt, label = element.asJsonObject.get("label")?.asString)
@@ -271,7 +273,14 @@ object ApiFactory {
         return peerTubeApis.getOrPut(baseUrl) { retrofit(baseUrl).create(PeerTubeApi::class.java) }
     }
 
-    fun image(server: String, path: String?) = path?.let { if (it.startsWith("http")) it else server.trimEnd('/') + it }
+    fun image(server: String, path: String?): String? {
+        val value = path?.trim()?.takeIf(String::isNotBlank) ?: return null
+        return when {
+            value.startsWith("https://", true) || value.startsWith("http://", true) -> value
+            value.startsWith("//") -> "https:$value"
+            else -> "${server.trimEnd('/')}/${value.trimStart('/')}"
+        }
+    }
     fun directory(): InstanceDirectoryApi = directoryApi ?: synchronized(this) { directoryApi ?: retrofit("https://instances.joinpeertube.org/").create(InstanceDirectoryApi::class.java).also { directoryApi = it } }
     fun config(server: String): PeerTubeConfigApi = retrofit(server.trimEnd('/') + "/").create(PeerTubeConfigApi::class.java)
     fun sepiaSearch(): SepiaSearchApi = sepiaApi ?: synchronized(this) { sepiaApi ?: retrofit("https://sepiasearch.org/").create(SepiaSearchApi::class.java).also { sepiaApi = it } }

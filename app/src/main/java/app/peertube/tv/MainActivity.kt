@@ -73,6 +73,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -374,6 +375,7 @@ class HomeModel : ViewModel() {
     var query by mutableStateOf("")
     var tab by mutableStateOf("home")
     var uiLanguage by mutableStateOf("auto")
+    var recommendationLanguage by mutableStateOf("country")
     var instances by mutableStateOf<List<PeerTubeInstance>>(emptyList())
     val sortedInstances: List<PeerTubeInstance>
         get() {
@@ -442,6 +444,7 @@ class HomeModel : ViewModel() {
         watchedRecommendationThreshold = prefs?.getString("watchedRecommendationThreshold", if (prefs?.getBoolean("hideWatchedRecommendations", true) == true) "complete" else "never")
             ?.takeIf { it in setOf("never", "minute", "three_minutes", "half", "complete") } ?: "never"
         recommendationBasis = prefs?.getString("recommendationBasis", "history")?.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
+        recommendationLanguage = prefs?.getString("recommendationLanguage", "country")?.takeIf { it == "country" || it in Locale.getISOLanguages() } ?: "country"
         watchedVideoIds.clear()
         runCatching { watchedVideoIds.addAll(Gson().fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
         excludedRecommendationIds.clear()
@@ -546,9 +549,14 @@ class HomeModel : ViewModel() {
                 .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
         }
     }
-    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("watchedVideoIds", Gson().toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", Gson().toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", Gson().toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putBoolean("serverAvailabilitySort", sortServersByAvailability)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", Gson().toJson(history))?.putString("favorites", Gson().toJson(favorites))?.putString("subscriptions", Gson().toJson(subscriptions))?.apply() }
+    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("recommendationLanguage", recommendationLanguage)?.putString("watchedVideoIds", Gson().toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", Gson().toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", Gson().toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putBoolean("serverAvailabilitySort", sortServersByAvailability)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", Gson().toJson(history))?.putString("favorites", Gson().toJson(favorites))?.putString("subscriptions", Gson().toJson(subscriptions))?.apply() }
     fun updateRecommendationBasis(basis: String) {
         recommendationBasis = basis.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
+        save()
+        loadRecommendations()
+    }
+    fun updateRecommendationLanguage(language: String) {
+        recommendationLanguage = language.takeIf { it == "country" || it in Locale.getISOLanguages() } ?: "country"
         save()
         loadRecommendations()
     }
@@ -635,6 +643,8 @@ class HomeModel : ViewModel() {
         searchSettings = searchSettingsRepository?.read() ?: searchSettings
     }
     fun updateAvailabilityFilter(value: String) { searchSettingsRepository?.setAvailabilityFilter(value); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(availabilityFilter = value) }
+    fun updateIncludeSensitive(enabled: Boolean) { searchSettingsRepository?.setIncludeSensitive(enabled); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(includeSensitive = enabled) }
+    fun updateSensitiveDisplayMode(mode: String) { searchSettingsRepository?.setSensitiveDisplayMode(mode); searchSettings = searchSettingsRepository?.read() ?: searchSettings.copy(sensitiveDisplayMode = mode) }
     fun setDiscoveryOption(key: String, value: Any) {
         val d = serverDiscoveryManager ?: return
         when (key) {
@@ -881,9 +891,26 @@ class HomeModel : ViewModel() {
     fun setUiLanguage(tag: String) {
         uiLanguage = tag
         AppCompatDelegate.setApplicationLocales(if (tag == "auto") LocaleListCompat.getEmptyLocaleList() else LocaleListCompat.forLanguageTags(tag))
+        if (prefs?.getBoolean("subtitleTranslationLanguageCustom", false) != true) {
+            val targetLanguage = interfaceSubtitleLanguage(tag)
+            prefs?.edit()?.putString("subtitleTranslationLanguage", targetLanguage)?.apply()
+        }
     }
     private fun message(id: Int, detail: String): String = appContext?.getString(id, detail) ?: detail
     private fun contentLanguage(): String? = (if (uiLanguage == "auto") java.util.Locale.getDefault().language else uiLanguage).substringBefore('-').takeIf { it.isNotBlank() && it != "auto" }
+    private fun recommendationContentLanguage(): String? {
+        if (recommendationLanguage != "country") return recommendationLanguage.substringBefore('-')
+        return when (searchCountryCode.uppercase(Locale.ROOT)) {
+            "RU" -> "ru"; "UA" -> "uk"; "BY" -> "be"; "KZ" -> "kk"; "AM" -> "hy"; "GE" -> "ka"
+            "DE", "AT" -> "de"; "FR" -> "fr"; "ES", "MX", "AR", "CL", "CO", "PE", "VE" -> "es"
+            "IT" -> "it"; "PT", "BR" -> "pt"; "NL" -> "nl"; "PL" -> "pl"; "CZ" -> "cs"
+            "SK" -> "sk"; "RO", "MD" -> "ro"; "GR" -> "el"; "TR" -> "tr"; "JP" -> "ja"
+            "KR" -> "ko"; "CN", "TW", "HK" -> "zh"; "IN" -> "hi"; "ID" -> "id"
+            "TH" -> "th"; "VN" -> "vi"; "IL" -> "he"; "SA", "EG", "AE" -> "ar"
+            "US", "GB", "CA", "AU", "NZ", "IE", "ZA", "NG", "PH", "SG" -> "en"
+            else -> null
+        }
+    }
     private fun countrySearchTerm(search: String): String {
         val countryName = runCatching { java.util.Locale("", searchCountryCode).getDisplayCountry(java.util.Locale.getDefault()) }.getOrDefault("")
         return if (countryName.isNotBlank()) "$search $countryName" else search
@@ -984,9 +1011,12 @@ class HomeModel : ViewModel() {
                 val providers = linkedMapOf<SearchSource, suspend (SearchRequest) -> SearchBatch>()
                 providers[SearchSource.SEPIA] = { req ->
                     val result = ApiFactory.sepiaSearch().videos(
-                        search = countrySearchTerm(req.query), start = req.page * req.pageSize, count = req.pageSize, sort = req.sort.takeUnless { it == "availability" } ?: "-match",
+                        // Keep the user's literal query intact. Appending a country name
+                        // here makes exact English titles and UUID-like terms fail to match.
+                        search = req.query, start = req.page * req.pageSize, count = req.pageSize, sort = req.sort.takeUnless { it == "availability" } ?: "-match",
                         categoryOneOf = req.category, durationMin = req.durationMin, durationMax = req.durationMax,
-                        isLive = if (req.liveOnly) true else null, languageOneOf = req.language
+                        isLive = if (req.liveOnly) true else null, languageOneOf = req.language,
+                        includeSensitive = req.includeSensitive
                     )
                     SearchBatch(result.data, result.total, if ((req.page + 1) * req.pageSize < result.total) req.page + 1 else null)
                 }
@@ -998,7 +1028,7 @@ class HomeModel : ViewModel() {
                 providers[SearchSource.FEDERATED] = { req ->
                     val host = URI(req.activeServer).host ?: error("Invalid active PeerTube server")
                     require(SafeNetworkTarget.isSafeHttpsHost(host)) { "Active PeerTube server address is not public" }
-                    val result = ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match")
+                    val result = ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match", req.includeSensitive)
                     SearchBatch(result.data, result.total, (req.page + 1).takeIf { (req.page + 1) * req.pageSize < result.total })
                 }
                 providers[SearchSource.DIRECT] = { req ->
@@ -1012,7 +1042,7 @@ class HomeModel : ViewModel() {
                     val attempts = preferred.mapNotNull { url ->
                         val host = runCatching { URI(url).host }.getOrNull() ?: return@mapNotNull null
                         if (!withContext(kotlinx.coroutines.Dispatchers.IO) { SafeNetworkTarget.isSafeHttpsHost(host) }) return@mapNotNull null
-                        runCatching { ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match").data }
+                        runCatching { ApiFactory.create("https://$host").searchVideos(req.query, req.page * req.pageSize, req.pageSize, req.sort.takeUnless { it == "availability" } ?: "-match", req.includeSensitive).data }
                     }
                     if (attempts.isEmpty() || attempts.all { it.isFailure }) error("No known PeerTube server could be reached")
                     val found = attempts.mapNotNull { it.getOrNull() }.flatten()
@@ -1029,11 +1059,13 @@ class HomeModel : ViewModel() {
                     val cachedQuery = prefs?.getString("lastSearchQuery", "").orEmpty()
                     SearchBatch(if (cachedQuery.equals(req.query, true)) savedCache else emptyList())
                 }
-                val req = SearchRequest(search, page, 40, sort, category, durationMin, durationMax, liveOnly, contentLanguage(), searchCountryCode, server)
+                val includeSensitive = searchSettings.includeSensitive && searchSettings.sensitiveDisplayMode != "hide"
+                val req = SearchRequest(search, page, 40, sort, category, durationMin, durationMax, liveOnly, contentLanguage(), searchCountryCode, server, includeSensitive)
                 val outcome = SearchAggregator(providers).search(req, searchSettings)
                 var result = outcome.videos
                 result = result.filter { video ->
-                    (!liveOnly || video.isLive == true) &&
+                    (req.includeSensitive || !video.nsfw) &&
+                        (!liveOnly || video.isLive == true) &&
                         (category == null || video.category?.id == category) &&
                         (durationMin == null || video.duration >= durationMin) &&
                         (durationMax == null || video.duration <= durationMax)
@@ -1219,7 +1251,7 @@ class HomeModel : ViewModel() {
                 if (queries.isEmpty()) { recommendations = emptyList(); return@launch }
                 val searchApi = ApiFactory.sepiaSearch()
                 val candidates = queries.map { term -> async {
-                    runCatching { searchApi.videos(search = countrySearchTerm(term), count = 20, languageOneOf = contentLanguage()).data }
+                    runCatching { searchApi.videos(search = countrySearchTerm(term), count = 20, languageOneOf = recommendationContentLanguage()).data }
                         .getOrDefault(emptyList())
                 } }.awaitAll().flatten()
                     .distinctBy { it.uuid }
@@ -2170,7 +2202,24 @@ private fun SettingsDashboard(
     }
     var subtitleSize by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleSize", 0.053f)) }
     var subtitleOffset by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleBottomOffset", 0.20f).coerceIn(0.02f, 0.50f)) }
-    var subtitleStyle by remember { mutableStateOf(playerPrefs.getString("subtitleStyle", "default") ?: "default") }
+    var subtitleHorizontal by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleHorizontalPosition", 0.50f).coerceIn(0.05f, 0.95f)) }
+    var subtitleColor by remember { mutableStateOf(playerPrefs.getString("subtitleColor", if (playerPrefs.getString("subtitleStyle", "default") == "yellow") "yellow" else "white") ?: "white") }
+    var subtitlesDefault by remember { mutableStateOf(playerPrefs.getBoolean("subtitlesEnabledByDefault", false)) }
+    var preferredSubtitleLanguage by remember { mutableStateOf(playerPrefs.getString("preferredSubtitleLanguage", "auto") ?: "auto") }
+    var subtitleTranslationLanguage by remember(playerPrefs, model.uiLanguage) {
+        mutableStateOf(if (!playerPrefs.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceSubtitleLanguage(model.uiLanguage)
+        else playerPrefs.getString("subtitleTranslationLanguage", interfaceSubtitleLanguage(model.uiLanguage)) ?: interfaceSubtitleLanguage(model.uiLanguage))
+    }
+    var downloadedTranslationLanguages by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var translationModelLanguage by remember { mutableStateOf("en") }
+    var translationModelStatus by remember { mutableStateOf<String?>(null) }
+    var translationModelBusy by remember { mutableStateOf(false) }
+    LaunchedEffect(settingsContext) {
+        refreshDownloadedTranslationLanguages { result ->
+            result.onSuccess { downloadedTranslationLanguages = it }
+                .onFailure { translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName }
+        }
+    }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
     val categories = listOf(
         "language" to R.string.settings_language_country,
@@ -2186,6 +2235,14 @@ private fun SettingsDashboard(
         val locale = Locale.forLanguageTag(tag)
         tag to locale.getDisplayName(locale)
     }
+    val recommendationLanguageOptions = remember {
+        listOf("country" to "") + Locale.getISOLanguages().distinct().map { code ->
+            code to Locale(code).getDisplayLanguage(Locale.getDefault()).takeIf(String::isNotBlank).orEmpty()
+        }.filter { it.second.isNotBlank() }.sortedBy { it.second.lowercase(Locale.getDefault()) }
+    }.map { (code, label) -> code to if (code == "country") stringResource(R.string.recommendations_language_country) else label }
+    val translationTargetLanguage = interfaceSubtitleLanguage(model.uiLanguage)
+    val subtitleTranslationOptions = listOf("auto" to stringResource(R.string.subtitle_translation_follow_interface, translationLanguageName(translationTargetLanguage))) +
+        subtitleTranslationLanguageOptions().sortedBy { if (it.first == translationTargetLanguage) "" else it.second.lowercase(Locale.getDefault()) }
     val countryOptions = remember { Locale.getISOCountries().map { code -> code to Locale("", code).getDisplayCountry(Locale.getDefault()) }.filter { it.second.isNotBlank() }.sortedBy { it.second.lowercase(Locale.getDefault()) } }
     Box(Modifier.fillMaxSize()) {
         if (selectedCategory == null) {
@@ -2274,6 +2331,8 @@ private fun SettingsDashboard(
                                 OutlinedButton(onClick = { onSelectSubpage("country") }, modifier = Modifier.fillMaxWidth()) {
                                     Text(if (model.searchCountryCode.isBlank()) stringResource(R.string.country_default) else countryOptions.firstOrNull { it.first == model.searchCountryCode }?.second ?: model.searchCountryCode)
                                 }
+                                val recommendationLanguageLabel = if (model.recommendationLanguage == "country") stringResource(R.string.recommendations_language_country) else Locale.forLanguageTag(model.recommendationLanguage).getDisplayLanguage(Locale.getDefault())
+                                SettingsChoice(stringResource(R.string.recommendations_language), recommendationLanguageLabel, recommendationLanguageOptions) { model.updateRecommendationLanguage(it) }
                             }
                             "general" -> {
                                 val launchLabel = stringResource(when (model.launchTab) {
@@ -2376,15 +2435,90 @@ private fun SettingsDashboard(
                                 }
                                 SettingsChoice(stringResource(R.string.player_resume_title), stringResource(if (model.resumePlayback) R.string.player_resume_saved else R.string.player_resume_start), listOf("false" to stringResource(R.string.player_resume_start), "true" to stringResource(R.string.player_resume_saved))) { model.updateResumePlayback(it.toBoolean()) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_remember_channel), Modifier.weight(1f)); Switch(rememberSubtitleChannel, { rememberSubtitleChannel = it; playerPrefs.edit().putBoolean("rememberSubtitleByChannel", it).apply() }) }
-                                SettingsChoice(stringResource(R.string.subtitle_style), stringResource(if (subtitleStyle == "yellow") R.string.subtitle_style_yellow else R.string.subtitle_style_default), listOf("default" to stringResource(R.string.subtitle_style_default), "yellow" to stringResource(R.string.subtitle_style_yellow))) { subtitleStyle = it; playerPrefs.edit().putString("subtitleStyle", it).apply() }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_default_enabled), Modifier.weight(1f)); Switch(subtitlesDefault, { subtitlesDefault = it; playerPrefs.edit().putBoolean("subtitlesEnabledByDefault", it).apply() }) }
+                                SettingsChoice(stringResource(R.string.subtitle_color), stringResource(when (subtitleColor) { "yellow" -> R.string.subtitle_color_yellow; "cyan" -> R.string.subtitle_color_cyan; "green" -> R.string.subtitle_color_green; else -> R.string.subtitle_color_white }), listOf("white" to stringResource(R.string.subtitle_color_white), "yellow" to stringResource(R.string.subtitle_color_yellow), "cyan" to stringResource(R.string.subtitle_color_cyan), "green" to stringResource(R.string.subtitle_color_green))) { subtitleColor = it; playerPrefs.edit().putString("subtitleColor", it).apply() }
                                 SettingsChoice(stringResource(R.string.subtitle_size), "${(subtitleSize * 100).toInt()}%", listOf("0.04" to "Small", "0.053" to "Medium", "0.065" to "Large")) { subtitleSize = it.toFloat(); playerPrefs.edit().putFloat("subtitleSize", subtitleSize).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_horizontal_position), "${(subtitleHorizontal * 100).toInt()}%", (5..95 step 5).map { "${it / 100f}" to "$it%" }) { subtitleHorizontal = it.toFloat(); playerPrefs.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontal).apply() }
                                 SettingsChoice(stringResource(R.string.subtitle_bottom_offset), "${(subtitleOffset * 100).toInt()}%", (5..50 step 5).map { "${it / 100f}" to "$it%" }) { subtitleOffset = it.toFloat(); playerPrefs.edit().putFloat("subtitleBottomOffset", subtitleOffset).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_language), if (preferredSubtitleLanguage == "auto") stringResource(R.string.subtitle_language_auto) else preferredSubtitleLanguage.uppercase(), listOf("auto" to stringResource(R.string.subtitle_language_auto), "ru" to "Русский", "en" to "English", "de" to "Deutsch", "fr" to "Français", "es" to "Español")) { preferredSubtitleLanguage = it; playerPrefs.edit().putString("preferredSubtitleLanguage", it).apply() }
+                                val translationChoice = if (!playerPrefs.getBoolean("subtitleTranslationLanguageCustom", false)) "auto" else subtitleTranslationLanguage
+                                SettingsChoice(stringResource(R.string.subtitle_translate_to), if (translationChoice == "auto") stringResource(R.string.subtitle_translation_follow_interface, translationLanguageName(translationTargetLanguage)) else translationLanguageName(subtitleTranslationLanguage), subtitleTranslationOptions) {
+                                    val useInterfaceLanguage = it == "auto"
+                                    subtitleTranslationLanguage = if (useInterfaceLanguage) translationTargetLanguage else it
+                                    playerPrefs.edit().putString("subtitleTranslationLanguage", subtitleTranslationLanguage).putBoolean("subtitleTranslationLanguageCustom", !useInterfaceLanguage).apply()
+                                }
+                                Text(stringResource(R.string.subtitle_models_title), style = MaterialTheme.typography.titleMedium)
+                                val availableModelLanguages = downloadableSubtitleTranslationLanguages().filter { it.first !in downloadedTranslationLanguages }
+                                val selectedModelLanguage = translationModelLanguage.takeIf { it in availableModelLanguages.map { language -> language.first } }
+                                    ?: availableModelLanguages.firstOrNull()?.first.orEmpty()
+                                if (availableModelLanguages.isNotEmpty()) {
+                                    SettingsChoice(
+                                        stringResource(R.string.subtitle_model_choose),
+                                        translationLanguageName(selectedModelLanguage),
+                                        availableModelLanguages
+                                    ) { translationModelLanguage = it; translationModelStatus = null }
+                                    Button(
+                                        onClick = {
+                                            translationModelBusy = true
+                                            translationModelStatus = settingsContext.getString(R.string.subtitle_model_downloading)
+                                            downloadTranslationLanguage(selectedModelLanguage) { result ->
+                                                translationModelBusy = false
+                                                result.onSuccess {
+                                                    downloadedTranslationLanguages = downloadedTranslationLanguages + selectedModelLanguage
+                                                    translationModelStatus = settingsContext.getString(R.string.subtitle_model_downloaded)
+                                                }.onFailure {
+                                                    translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName
+                                                }
+                                            }
+                                        },
+                                        enabled = !translationModelBusy,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text(if (translationModelBusy) stringResource(R.string.subtitle_model_downloading) else stringResource(R.string.subtitle_model_download)) }
+                                } else {
+                                    Text(stringResource(R.string.subtitle_models_all_downloaded), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text(stringResource(R.string.subtitle_models_downloaded_title), style = MaterialTheme.typography.titleSmall)
+                                if (downloadedTranslationLanguages.isEmpty()) {
+                                    Text(stringResource(R.string.subtitle_models_none), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                } else {
+                                    downloadableSubtitleTranslationLanguages().filter { it.first in downloadedTranslationLanguages }.forEach { (code, label) ->
+                                        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(label, Modifier.weight(1f))
+                                            TextButton(
+                                                enabled = !translationModelBusy,
+                                                onClick = {
+                                                    translationModelBusy = true
+                                                    translationModelStatus = settingsContext.getString(R.string.subtitle_model_removing)
+                                                    deleteTranslationLanguage(code) { result ->
+                                                        translationModelBusy = false
+                                                        result.onSuccess {
+                                                            downloadedTranslationLanguages = downloadedTranslationLanguages - code
+                                                            translationModelStatus = settingsContext.getString(R.string.subtitle_model_removed)
+                                                        }.onFailure {
+                                                            translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName
+                                                        }
+                                                    }
+                                                }
+                                            ) { Text(stringResource(R.string.subtitle_model_remove)) }
+                                        }
+                                    }
+                                }
+                                translationModelStatus?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
                             }
                             "search" -> {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text(stringResource(R.string.show_search_icon), Modifier.weight(1f))
                                     Switch(model.showSearchIcon, model::updateShowSearchIcon)
                                 }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.search_include_sensitive), Modifier.weight(1f))
+                                    Switch(model.searchSettings.includeSensitive, model::updateIncludeSensitive)
+                                }
+                                SettingsChoice(
+                                    stringResource(R.string.search_sensitive_display),
+                                    stringResource(when (model.searchSettings.sensitiveDisplayMode) { "hide" -> R.string.search_sensitive_hide; "warning" -> R.string.search_sensitive_warning; "show" -> R.string.search_sensitive_show; else -> R.string.search_sensitive_blur }),
+                                    listOf("hide" to stringResource(R.string.search_sensitive_hide), "blur" to stringResource(R.string.search_sensitive_blur), "warning" to stringResource(R.string.search_sensitive_warning), "show" to stringResource(R.string.search_sensitive_show))
+                                ) { model.updateSensitiveDisplayMode(it) }
                                 val sourceLabels = listOf(
                                     SearchSource.SEPIA to R.string.search_source_sepia,
                                     SearchSource.PEERSEEK to R.string.search_source_peerseek,
@@ -2580,12 +2714,11 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
             .combinedClickable(onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen() }, onLongClick = showContextMenu).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
             VideoThumbnail(video, server, Modifier.width(180.dp).height(102.dp), progress)
                 Column(Modifier.weight(1f).padding(start = 14.dp, end = 54.dp)) {
-                Text(
-                    if (statusLabel.isNullOrBlank()) video.name else stringResource(R.string.live_title_with_status, video.name, statusLabel),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 2,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                )
+                if (statusLabel.isNullOrBlank()) {
+                    TranslatedVideoMetadataText(video.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                } else {
+                    Text(stringResource(R.string.live_title_with_status, video.name, statusLabel), style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
                 Text("${video.channel?.displayName ?: stringResource(R.string.channel_unknown)} · ${stringResource(R.string.video_views, video.views.toString())}", maxLines = 1)
                 PublishedDate(video.publishedAt)
             }
@@ -2629,7 +2762,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
             Column {
                 VideoThumbnail(video, server, Modifier.fillMaxWidth().aspectRatio(16f / 9f), progress)
                 Column(Modifier.fillMaxWidth().height((titleLines * 20 + 80).dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(video.name, style = MaterialTheme.typography.titleSmall, maxLines = titleLines, minLines = titleLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (focused) Modifier.basicMarquee(velocity = 30.dp * tickerSpeed) else Modifier)
+                    TranslatedVideoMetadataText(video.name, style = MaterialTheme.typography.titleSmall, maxLines = titleLines, minLines = titleLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (focused) Modifier.basicMarquee(velocity = 30.dp * tickerSpeed) else Modifier)
                     Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     Text(stringResource(R.string.video_views, video.views.toString()), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                     PublishedDate(video.publishedAt)
@@ -2710,13 +2843,41 @@ private fun VideoContextMenu(
 }
 
 @Composable private fun VideoThumbnail(video: Video, server: String, modifier: Modifier = Modifier, progress: Float = 0f) {
+    val context = LocalContext.current
+    val thumbnailCandidates = remember(video.uuid, server, video.thumbnailUrl, video.thumbnailPath) {
+        listOfNotNull(
+            ApiFactory.image(video.sourceServer(server), video.thumbnailUrl),
+            ApiFactory.image(video.sourceServer(server), video.thumbnailPath)
+        ).distinct()
+    }
+    var thumbnailCandidateIndex by remember(video.uuid, server) { mutableIntStateOf(0) }
+    LaunchedEffect(thumbnailCandidates) { thumbnailCandidateIndex = 0 }
+    val sensitivePrefs = remember(context) { context.getSharedPreferences("peertube", Activity.MODE_PRIVATE) }
+    var sensitiveMode by remember(video.uuid) { mutableStateOf(sensitivePrefs.getString("sensitiveDisplayMode", "blur") ?: "blur") }
+    DisposableEffect(sensitivePrefs) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "sensitiveDisplayMode") sensitiveMode = sensitivePrefs.getString(key, "blur") ?: "blur"
+        }
+        sensitivePrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { sensitivePrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    val blurSensitive = video.nsfw && sensitiveMode == "blur"
+    val warnSensitive = video.nsfw && sensitiveMode == "warning"
     Box(modifier) {
         AsyncImage(
-            model = video.thumbnailUrl ?: ApiFactory.image(video.sourceServer(server), video.thumbnailPath),
+            model = thumbnailCandidates.getOrNull(thumbnailCandidateIndex),
             contentDescription = video.name,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().then(if (blurSensitive) Modifier.blur(28.dp) else Modifier),
+            onError = {
+                if (thumbnailCandidateIndex < thumbnailCandidates.lastIndex) thumbnailCandidateIndex++
+            }
         )
+        if (warnSensitive) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.82f)), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.search_sensitive_warning_badge), color = Color.White, style = MaterialTheme.typography.titleSmall)
+            }
+        }
         if (progress > 0f) {
             Canvas(Modifier.fillMaxWidth().height(3.dp).align(Alignment.BottomStart)) {
                 drawLine(Color(0x99FFFFFF), Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = size.height)
@@ -2845,7 +3006,7 @@ internal fun formatPublishedDate(value: String?): String? {
                             val progress = if (video.duration > 0) ((watchProgressMs[video.uuid] ?: 0L).toFloat() / (video.duration * 1000f)).coerceIn(0f, 1f) else 0f
                             VideoThumbnail(video, server, Modifier.fillMaxWidth().aspectRatio(16f / 9f), progress)
                             Column(Modifier.fillMaxWidth().height((titleLines * 20 + 58).dp).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text(
+                                TranslatedVideoMetadataText(
                                     video.name,
                                     style = MaterialTheme.typography.titleSmall,
                                     maxLines = titleLines,
