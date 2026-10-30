@@ -106,7 +106,7 @@
     <string name="subtitle_size">Subtitle size</string>
     <string name="subtitle_bottom_offset">Subtitle distance from bottom</string>
     <string name="video_info">Video information</string>
-    <string name="open_channel_video_page">Open channel video page</string>
+    <string name="open_channel_video_page">Open channel videos</string>
     <string name="player_info_unavailable">Video information is unavailable.</string>
     <string name="search_source_sepia">Sepia Search</string><string name="search_source_peerseek">PeerSeek</string><string name="search_source_custom">Custom indexes</string><string name="search_source_federated">Federated search</string><string name="search_source_direct">Known server search</string><string name="search_source_local">Local cache and server catalog</string>
     <string name="search_execution_mode">Search mode</string><string name="search_mode_sequential">Sequential</string><string name="search_mode_parallel">Parallel</string><string name="search_mode_hybrid">Combined (recommended)</string><string name="search_sufficient_results">Sufficient result count</string><string name="search_custom_indexes_help">Custom index HTTPS URL templates. Use {query}, {page}, and {count}; response must be a PeerTube/PeerSeek JSON video list.</string><string name="search_sources_in_use">Sources: %1$s</string><string name="search_source_errors">Some sources failed: %1$s</string><string name="search_more">Load more results</string>

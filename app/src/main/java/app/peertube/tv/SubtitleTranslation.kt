@@ -25,7 +25,8 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.concurrent.TimeUnit
 
 data class TranslatedCue(val startMs: Long, val endMs: Long, val text: String)
@@ -97,7 +98,9 @@ fun currentInterfaceTranslationLanguage(context: Context): String {
     return interfaceSubtitleLanguage(appLocale.ifBlank { systemLocale })
 }
 
-private val metadataTranslationMemory = ConcurrentHashMap<String, String>()
+private val metadataTranslationMemory = Collections.synchronizedMap(object : LinkedHashMap<String, String>(256, 0.75f, true) {
+    override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > 300
+})
 
 private fun ensureTranslationModelsAvailable(
     translator: com.google.mlkit.nl.translate.Translator,
@@ -148,6 +151,8 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
     val translated = try {
         ensureTranslationModelsAvailable(translator, source, destination)
         translateMetadataInChunks(translator, sourceText)
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
     } catch (_: Exception) {
         return@withContext text
     } finally {
@@ -156,7 +161,9 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
     if (translated.isBlank() || translated == sourceText) return@withContext text
     synchronized(metadataTranslationMemory) {
         if (preferences.all.keys.count { it.startsWith("videoMetadataTranslation_") } >= 500) {
-            preferences.all.keys.firstOrNull { it.startsWith("videoMetadataTranslation_") }?.let(preferences.edit()::remove)
+            preferences.all.keys.firstOrNull { it.startsWith("videoMetadataTranslation_") }?.let { oldestKey ->
+                preferences.edit().remove(oldestKey).apply()
+            }
         }
         preferences.edit().putString(cacheKey, translated).apply()
         metadataTranslationMemory[cacheKey] = translated

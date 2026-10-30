@@ -106,7 +106,7 @@
     <string name="subtitle_size">Размер субтитров</string>
     <string name="subtitle_bottom_offset">Высота субтитров от нижнего края</string>
     <string name="video_info">Информация о видео</string>
-    <string name="open_channel_video_page">Открыть страницу видео канала</string>
+    <string name="open_channel_video_page">Открыть видео канала</string>
     <string name="player_info_unavailable">Информация о видео недоступна.</string>
     <string name="search_source_sepia">Sepia Search</string><string name="search_source_peerseek">PeerSeek</string><string name="search_source_custom">Свои индексы</string><string name="search_source_federated">Федеративный поиск</string><string name="search_source_direct">Поиск по известным серверам</string><string name="search_source_local">Локальный кеш и каталог серверов</string>
     <string name="search_execution_mode">Режим поиска</string><string name="search_mode_sequential">Последовательный</string><string name="search_mode_parallel">Параллельный</string><string name="search_mode_hybrid">Комбинированный (рекомендуется)</string><string name="search_sufficient_results">Достаточное количество результатов</string><string name="search_custom_indexes_help">Шаблоны URL пользовательских HTTPS-индексов. Используйте {query}, {page}, {count}; ответ должен содержать список видео в формате PeerTube/PeerSeek JSON.</string><string name="search_sources_in_use">Источники: %1$s</string><string name="search_source_errors">Ошибки источников: %1$s</string><string name="search_more">Загрузить ещё</string>

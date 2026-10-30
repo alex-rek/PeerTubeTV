@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package app.peertube.tv
 
 import android.app.Activity
@@ -108,6 +110,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     return uri.scheme in listOf("http", "https") && !uri.host.isNullOrBlank() && uri.userInfo == null && uri.query == null && uri.fragment == null
 }
 
+@androidx.media3.common.util.UnstableApi
 @Composable private fun VideoScreen(initialUrl: String?, initialAudioOnly: Boolean, initialLiveStateId: Int?, uuid: String?, server: String?, title: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, playbackQueue: List<PlaybackQueueItem>, queueIndex: Int, queueJson: String, afterVideoAction: String, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: String, playerClockSize: String, playerClockBackdrop: String, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: String, playerVolume: Int, watchedRecommendationThreshold: String) {
     val context = LocalContext.current
     var url by remember(initialUrl, uuid) { mutableStateOf(initialUrl?.takeIf(String::isNotBlank)) }
@@ -124,7 +127,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             return@LaunchedEffect
         }
         try {
-            val details = runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).video(uuid) } }.getOrNull()
+            val details = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).video(uuid) } }.getOrNull()
             if (details != null) {
                 videoDescription = details.description.orEmpty()
                 if (url == null) {
@@ -139,7 +142,9 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             } else if (url == null) {
                 errorText = context.getString(R.string.player_fetch_error, context.getString(R.string.error_request))
             }
-            subtitles = runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).captions(uuid).data } }.getOrDefault(emptyList())
+            subtitles = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).captions(uuid).data } }.getOrDefault(emptyList())
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (url == null) errorText = context.getString(R.string.player_fetch_error, e.localizedMessage ?: context.getString(R.string.error_request))
         } finally {
@@ -155,7 +160,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             }
         }
         url != null -> Player(
-            url = url!!,
+            url = url.orEmpty(),
             audioOnlySource = audioOnly,
             uuid = uuid,
             title = title,
@@ -217,6 +222,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     }
 }
 
+@androidx.media3.common.util.UnstableApi
 @Composable private fun Player(url: String, audioOnlySource: Boolean, uuid: String?, title: String, subtitles: List<VideoCaption>, description: String, server: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, afterVideoAction: String, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: String, playerClockSize: String, playerClockBackdrop: String, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: String, playerVolume: Int, watchedRecommendationThreshold: String, onVideoEnded: () -> Unit) {
     val context = LocalContext.current
 
@@ -326,6 +332,17 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         add(8)
         if (!uuid.isNullOrBlank()) add(9)
         if (!uuid.isNullOrBlank()) add(10)
+    }
+    fun openChannelVideos() {
+        val name = channelName?.takeIf(String::isNotBlank) ?: return
+        val host = channelHost.ifBlank { Uri.parse(server).host.orEmpty() }
+        val target = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("navigateChannelVideos", true)
+            putExtra("navigateChannelName", name)
+            putExtra("navigateChannelHost", host)
+        }
+        context.startActivity(target)
     }
 
     val trackSelector = remember(url) { DefaultTrackSelector(context) }
@@ -590,7 +607,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         if (!commentsPanelOpen || commentsLoaded || uuid.isNullOrBlank()) return@LaunchedEffect
         commentsLoading = true
         commentsError = null
-        val result = runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, 0, 20) } }
+        val result = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, 0, 20) } }
         result.onSuccess { body ->
             commentsTotal = body.get("total")?.asInt ?: 0
             comments = body.getAsJsonArray("data")?.mapNotNull { element ->
@@ -611,7 +628,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         panelScope.launch {
             commentsLoading = true
             val nextStart = commentsStart + 20
-            runCatching { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, nextStart, 20) } }
+            runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).commentThreads(uuid, nextStart, 20) } }
                 .onSuccess { body ->
                     commentsStart = nextStart
                     commentsTotal = body.get("total")?.asInt ?: commentsTotal
@@ -909,11 +926,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     KeyEvent.KEYCODE_DPAD_DOWN -> { panelScope.launch { val target = (infoScrollState.value + 180).coerceAtMost(infoScrollState.maxValue); infoScrollState.scrollTo(target); infoPanelChannelFocused = target >= infoScrollState.maxValue && infoScrollState.maxValue > 0 }; true }
                     KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { infoPanelOpen = false; showControls(); true }
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
-                        if (infoPanelChannelFocused) runCatching {
-                            val host = channelHost.ifBlank { Uri.parse(server).host.orEmpty() }
-                            val channelUrl = Uri.parse("https://$host/video-channels/${Uri.encode(channelName.orEmpty())}/videos")
-                            context.startActivity(Intent(Intent.ACTION_VIEW, channelUrl))
-                        }
+                        if (infoPanelChannelFocused) runCatching { openChannelVideos() }
                         true
                     }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { if (event.nativeKeyEvent.repeatCount == 0) { if (player.isPlaying) player.pause() else player.play() }; true }
@@ -1218,11 +1231,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(
-                    onClick = {
-                        val host = channelHost.ifBlank { Uri.parse(server).host.orEmpty() }
-                        val target = Uri.parse("https://$host/video-channels/${Uri.encode(channelName.orEmpty())}/videos")
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, target)) }
-                    },
+                    onClick = { openChannelVideos() },
                     modifier = Modifier.fillMaxWidth().background(if (infoPanelChannelFocused) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))
                 ) { Text(stringResource(R.string.open_channel_video_page), color = Color.White, modifier = Modifier.fillMaxWidth()) }
             }

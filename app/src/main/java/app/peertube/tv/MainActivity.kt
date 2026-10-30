@@ -30,6 +30,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -48,7 +49,6 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Recommend
 import androidx.compose.material.icons.filled.Settings
@@ -109,7 +109,11 @@ import com.google.gson.reflect.TypeToken
 
 private val supportedUiLanguages = listOf("en", "ru", "es", "fr", "de", "pt", "it", "zh-CN", "ja", "hi", "ar")
 
+data class ChannelNavigationTarget(val name: String, val host: String)
+
 class MainActivity : AppCompatActivity() {
+    internal var pendingChannelNavigation by mutableStateOf<ChannelNavigationTarget?>(null)
+
     private var availableUpdate by mutableStateOf<GitHubRelease?>(null)
     private var updateMessage by mutableStateOf<String?>(null)
     private var updateBusy by mutableStateOf(false)
@@ -117,6 +121,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingChannelNavigation = channelNavigationFrom(intent)
         val colors = darkColorScheme(
             primary = Color(0xFF8AB4F8),
             secondary = Color(0xFF80CBC4),
@@ -161,6 +166,21 @@ class MainActivity : AppCompatActivity() {
                 }.getOrNull()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingChannelNavigation = channelNavigationFrom(intent)
+    }
+
+    private fun channelNavigationFrom(intent: Intent): ChannelNavigationTarget? {
+        if (!intent.getBooleanExtra("navigateChannelVideos", false)) return null
+        val name = intent.getStringExtra("navigateChannelName")?.trim()?.takeIf(String::isNotBlank) ?: return null
+        val host = intent.getStringExtra("navigateChannelHost")?.trim()?.removePrefix("https://")
+            ?.removePrefix("http://")?.substringBefore('/')?.trimEnd('.')
+            ?.takeIf { it.matches(Regex("(?i)[a-z0-9.-]{1,253}")) } ?: return null
+        return ChannelNavigationTarget(name, host)
     }
 
     override fun onResume() {
@@ -970,7 +990,8 @@ class HomeModel : ViewModel() {
                         }.getOrNull() ?: candidate
                     } }.awaitAll().filterNotNull()
                 }.distinctBy { it.uuid }
-                val cutoff = java.time.Instant.now().minusSeconds(24 * 60 * 60)
+                val nowMillis = System.currentTimeMillis()
+                val cutoffMillis = nowMillis - 24 * 60 * 60 * 1000L
                 // Browse recent non-live videos too: archived streams no longer match isLive=true.
                 val recentPages = (0..2).map { page -> async {
                     runCatching {
@@ -978,20 +999,22 @@ class HomeModel : ViewModel() {
                     }.getOrDefault(emptyList())
                 } }.awaitAll()
                 val recentCandidates = recentPages.flatten().distinctBy { it.uuid }.filter { video ->
-                    val published = video.publishedAt?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }
-                    published != null && !published.isBefore(cutoff) && !published.isAfter(java.time.Instant.now())
+                    val published = video.publishedAt?.let(::parseIsoDateMillis)
+                    published != null && published >= cutoffMillis && published <= nowMillis
                 }.take(60)
                 recentlyEndedLiveVideos = recentCandidates.chunked(6).flatMap { batch ->
                     batch.map { video -> async {
                         runCatching {
                             val origin = ApiFactory.create(video.sourceServer(server))
-                            val endedAt = origin.liveSession(video.uuid).endDate?.let { java.time.Instant.parse(it) }
-                            if (endedAt != null && !endedAt.isBefore(cutoff) && !endedAt.isAfter(java.time.Instant.now())) video else null
+                            val endedAt = origin.liveSession(video.uuid).endDate?.let(::parseIsoDateMillis)
+                            if (endedAt != null && endedAt >= cutoffMillis && endedAt <= nowMillis) video else null
                         }.getOrNull()
                     } }.awaitAll().filterNotNull()
                 }.distinctBy { it.uuid }
                 val endedIds = recentlyEndedLiveVideos.mapTo(hashSetOf()) { it.uuid }
                 liveVideos = results.filterNot { it.uuid in endedIds }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 error = message(R.string.error_live, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
@@ -1328,6 +1351,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     var clearHistoryPeriodDialog by remember { mutableStateOf(false) }
     var settingsCategory by remember { mutableStateOf<String?>(null) }
     var settingsSubpage by remember { mutableStateOf<String?>(null) }
+    var homeInitialized by remember { mutableStateOf(false) }
     var historyPeriodHours by remember { mutableIntStateOf(1) }
     val periodLabel = when (historyPeriodHours) { 2 -> stringResource(R.string.history_period_2); 3 -> stringResource(R.string.history_period_3); 6 -> stringResource(R.string.history_period_6); 24 -> stringResource(R.string.history_period_24); else -> stringResource(R.string.history_period_1) }
     val backupScope = rememberCoroutineScope()
@@ -1351,10 +1375,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             focusedVideoMenu = null
         }
     }
-    val importBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) backupScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching {
-                restoreSettingsBackup(context, uri)
+    val restoreBackupFromUri: (Uri?) -> Unit = { uri ->
+        if (uri != null) backupScope.launch {
+            val result = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { restoreSettingsBackup(context, uri) }
+            }
+            result.onSuccess {
                 m.init(context)
                 m.syncWatchProgress()
                 when (m.tab) {
@@ -1365,7 +1391,25 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     "channels" -> m.syncSubscriptions()
                     "home" -> m.load()
                 }
-            }.onFailure { m.error = it.localizedMessage ?: context.getString(R.string.error_request) }
+            }.onFailure {
+                m.error = it.localizedMessage ?: context.getString(R.string.error_request)
+                android.widget.Toast.makeText(context, m.error, android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+    val importBackupLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument(), restoreBackupFromUri)
+    val importBackupFallbackLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent(), restoreBackupFromUri)
+    val launchBackupRestore: () -> Unit = {
+        try {
+            // A wildcard lets Android's system document picker work on TV devices
+            // whose file providers do not advertise application/zip explicitly.
+            importBackupLauncher.launch(arrayOf("*/*"))
+        } catch (_: android.content.ActivityNotFoundException) {
+            try { importBackupFallbackLauncher.launch("*/*") }
+            catch (error: android.content.ActivityNotFoundException) {
+                m.error = error.localizedMessage ?: context.getString(R.string.error_request)
+                android.widget.Toast.makeText(context, m.error, android.widget.Toast.LENGTH_LONG).show()
+            }
         }
     }
     var lastBackPressAt by remember { mutableLongStateOf(0L) }
@@ -1406,17 +1450,29 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     }
     LaunchedEffect(Unit) {
         m.init(context)
-        m.tab = m.launchTab
+        val hasPendingChannelNavigation = (context as? MainActivity)?.pendingChannelNavigation != null
+        m.tab = if (hasPendingChannelNavigation) "channel" else m.launchTab
         m.syncWatchProgress()
-        when (m.tab) {
-            "popular" -> m.loadPopular()
-            "instances" -> m.loadInstances()
-            "recommendations" -> m.loadRecommendations()
-            "subscriptions" -> m.loadSubscriptions()
-            "channels" -> m.syncSubscriptions()
-            "home" -> m.load()
+        if (!hasPendingChannelNavigation) {
+            when (m.tab) {
+                "popular" -> m.loadPopular()
+                "instances" -> m.loadInstances()
+                "recommendations" -> m.loadRecommendations()
+                "subscriptions" -> m.loadSubscriptions()
+                "channels" -> m.syncSubscriptions()
+                "home" -> m.load()
+            }
+            m.loadRecommendations()
         }
-        m.loadRecommendations()
+        homeInitialized = true
+    }
+    val pendingChannelNavigation = (context as? MainActivity)?.pendingChannelNavigation
+    LaunchedEffect(homeInitialized, pendingChannelNavigation) {
+        val target = pendingChannelNavigation
+        if (homeInitialized && target != null) {
+            m.loadChannelVideos(target.name, target.host)
+            (context as? MainActivity)?.pendingChannelNavigation = null
+        }
     }
     LaunchedEffect(m.tab) {
         if (m.tab == "live") {
@@ -1846,23 +1902,23 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     }
                 }
             } else if (m.tab == "sepia") {
-                Text(stringResource(R.string.nav_sepia), style = MaterialTheme.typography.headlineSmall)
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IconButton(
                         onClick = startVoiceSearch,
-                        modifier = Modifier.size(52.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
+                        modifier = Modifier.size(42.dp).background(MaterialTheme.colorScheme.primary, CircleShape)
                     ) {
-                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_search), tint = MaterialTheme.colorScheme.onPrimary)
+                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_search), tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
                     }
                     OutlinedTextField(
                         value = searchText,
                         onValueChange = { searchText = it; if (it.isBlank()) hasSearchSubmitted = false },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text(stringResource(R.string.search_peertube)) }
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        label = { Text(stringResource(R.string.search_peertube), style = MaterialTheme.typography.labelSmall) }
                     )
                 }
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     SearchFilter(stringResource(R.string.search_sort), sortOptions.first { it.first == searchSort }.second, sortOptions) { searchSort = it }
                     SearchFilter(stringResource(R.string.search_category), categoryOptions.first { it.first == searchCategory }.second, categoryOptions) { searchCategory = it }
                     SearchFilter(stringResource(R.string.search_duration_filter), durationOptions.first { it.first == searchDuration }.second, durationOptions) { searchDuration = it }
@@ -1877,6 +1933,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         Switch(checked = searchLiveOnly, onCheckedChange = { searchLiveOnly = it })
                     }
                 }
+                val sortedSearchVideos = remember(m.videos, m.videoSortMode) { m.sortVideos(m.videos) }
                 m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (m.isSearching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
                 if (m.isVerifyingAvailability) Text(stringResource(R.string.availability_checking), style = MaterialTheme.typography.bodySmall)
@@ -1890,12 +1947,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(m.sortVideos(m.videos), key = { it.uuid }) { video -> VideoGridCard(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, m.sortVideos(m.videos)) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(m.sortVideos(m.videos), key = { it.uuid }) { video -> VideoListRow(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, m.sortVideos(m.videos)) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, video.sourceServer(m.server), m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
@@ -1915,7 +1972,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     onClearHistory = { clearHistoryDialog = true },
                     onClearHistoryPeriod = { clearHistoryPeriodDialog = true },
                     onExportBackup = exportBackup,
-                    onImportBackup = { importBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }
+                    onImportBackup = launchBackupRestore
                 )
             } else if (m.tab == "home") {
                 val latestShelfFirstCardFocus = remember { FocusRequester() }
@@ -1950,7 +2007,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             server = m.server,
                             watchProgressMs = m.watchProgressMs,
                             tickerSpeed = m.tickerSpeed,
-                            firstCardFocusRequester = latestShelfFirstCardFocus,
+                                firstCardFocusRequester = latestShelfFirstCardFocus,
                                 titleLines = m.videoTitleLines,
                             onOpen = { video -> openVideoInQueue(video, m.sortVideos(m.videos)) },
                             isFavorite = { video -> m.favorites.any { it.uuid == video.uuid } },
@@ -1971,8 +2028,6 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     Text(stringResource(R.string.subscriptions_help), style = MaterialTheme.typography.bodyMedium)
                     if (m.subscriptions.isEmpty()) Text(stringResource(R.string.subscriptions_empty), modifier = Modifier.padding(16.dp))
                     else if (m.subscriptionVideos.isEmpty() && m.error == null) Text(stringResource(R.string.subscriptions_no_videos), modifier = Modifier.padding(16.dp))
-                } else if (m.tab == "sepia") {
-                    Text(stringResource(R.string.nav_sepia), style = MaterialTheme.typography.headlineSmall)
                 } else if (m.tab == "channel") {
                     Text(m.activeChannelTitle, style = MaterialTheme.typography.headlineSmall)
                 } else if (m.tab == "live") {
@@ -2054,7 +2109,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             onClearHistory = { clearHistoryDialog = true },
                             onClearHistoryPeriod = { clearHistoryPeriodDialog = true },
                             onExportBackup = exportBackup,
-                            onImportBackup = { importBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream")) }
+                            onImportBackup = launchBackupRestore
                         )
                     }
                 }
@@ -2723,14 +2778,6 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
                 PublishedDate(video.publishedAt)
             }
         }
-        IconButton(
-            onClick = showContextMenu,
-            modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).size(42.dp)
-                .onFocusChanged { state -> if (state.isFocused) setContextMenuTarget(video.uuid, showContextMenu, null) else setContextMenuTarget(video.uuid, null, null) }
-                .background(Color.Black.copy(alpha = 0.68f), CircleShape)
-        ) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.video_actions), tint = Color.White)
-        }
         if (contextMenu) VideoContextMenu(video.name, subscribed, favorite, dismissContextMenu, { dismissContextMenu(); onOpen() }, { dismissContextMenu(); onSubscription() }, { dismissContextMenu(); onFavorite() }, { dismissContextMenu(); onChannel() }, { dismissContextMenu(); onExcludeRecommendation() }, { dismissContextMenu(); onMarkWatched() })
     }
 }
@@ -2768,14 +2815,6 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
                     PublishedDate(video.publishedAt)
                 }
             }
-        }
-        IconButton(
-            onClick = showContextMenu,
-            modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(40.dp)
-                .onFocusChanged { state -> if (state.isFocused) setContextMenuTarget(video.uuid, showContextMenu, null) else setContextMenuTarget(video.uuid, null, null) }
-                .background(Color.Black.copy(alpha = 0.72f), CircleShape)
-        ) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.video_actions), tint = Color.White)
         }
         if (contextMenu) VideoContextMenu(video.name, subscribed, favorite, dismissContextMenu, { dismissContextMenu(); onOpen() }, { dismissContextMenu(); onSubscription() }, { dismissContextMenu(); onFavorite() }, { dismissContextMenu(); if (channel.isNotBlank()) onChannel(channel) }, { dismissContextMenu(); onExcludeRecommendation() }, { dismissContextMenu(); onMarkWatched() })
     }
@@ -2844,10 +2883,18 @@ private fun VideoContextMenu(
 
 @Composable private fun VideoThumbnail(video: Video, server: String, modifier: Modifier = Modifier, progress: Float = 0f) {
     val context = LocalContext.current
-    val thumbnailCandidates = remember(video.uuid, server, video.thumbnailUrl, video.thumbnailPath) {
+    val thumbnailCandidates = remember(video.uuid, server, video.thumbnailUrl, video.thumbnailPath, video.previewPath) {
+        val origin = video.sourceServer(server)
         listOfNotNull(
-            ApiFactory.image(video.sourceServer(server), video.thumbnailUrl),
-            ApiFactory.image(video.sourceServer(server), video.thumbnailPath)
+            ApiFactory.image(origin, video.thumbnailUrl),
+            ApiFactory.image(origin, video.thumbnailPath),
+            ApiFactory.image(origin, video.previewPath),
+            // Some older or partially compatible instances omit thumbnailPath in
+            // search results even though their standard PeerTube thumbnail exists.
+            ApiFactory.image(origin, "lazy-static/thumbnails/${video.uuid}.jpg"),
+            ApiFactory.image(origin, "static/thumbnails/${video.uuid}.jpg"),
+            ApiFactory.image(origin, "lazy-static/previews/${video.uuid}.jpg"),
+            ApiFactory.image(origin, "static/previews/${video.uuid}.jpg")
         ).distinct()
     }
     var thumbnailCandidateIndex by remember(video.uuid, server) { mutableIntStateOf(0) }
@@ -2943,7 +2990,11 @@ internal fun formatPublishedDate(value: String?): String? {
 @Composable private fun SearchFilter(label: String, selected: String, options: List<Pair<String, String>>, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { expanded = true }) { Text("$label: $selected", maxLines = 1) }
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.heightIn(min = 34.dp),
+            contentPadding = PaddingValues(horizontal = 5.dp, vertical = 0.dp)
+        ) { Text("$label: $selected", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (value, title) ->
                 DropdownMenuItem(text = { Text(title) }, onClick = { onSelect(value); expanded = false })

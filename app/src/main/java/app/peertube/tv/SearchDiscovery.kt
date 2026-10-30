@@ -215,13 +215,26 @@ class ServerRepository(context: Context) {
         merge(items.mapNotNull { it?.let(::normalizeDiscoveredServer) }.filter { SafeNetworkTarget.isSafeHttpsHost(it.host) })
     }
     fun seedBundled(context: Context) {
-        val seedVersion = 3
+        val seedVersion = 4
+        val removedPinnedHosts = setOf(
+            "peervideo.ru", "peertube.cluster.wtf", "angeltales.angellive.ru",
+            "video.pavel-english.ru", "video.radiodar.ru", "angelsoft.angellive.ru",
+            "tube.ghk-academy.info", "video.383.su", "peertube.luanti.ru"
+        )
         if (prefs.getInt("serverSeedVersion", 0) >= seedVersion) return
+        // Remove the old pinned entries from already-installed copies as well as
+        // from the new bundled catalog, otherwise the persisted cache would keep
+        // restoring them after an app update.
+        val retainedServers = all().filterNot { it.host.equalsAnyIgnoreCase(removedPinnedHosts) }
+        prefs.edit().putString("discoveredServers", gson.toJson(retainedServers)).apply()
         val seeds = runCatching { context.assets.open("peertube_servers.json").bufferedReader().use { gson.fromJson<List<DiscoveredServer>>(it, object : TypeToken<List<DiscoveredServer>>() {}.type) } }.getOrNull().orEmpty()
+            .filterNot { it.host.equalsAnyIgnoreCase(removedPinnedHosts) }
         merge(seeds.mapNotNull { it?.let(::normalizeDiscoveredServer) }.filter { it.host.matches(Regex("(?i)[a-z0-9.-]{1,253}") ) && !it.host.startsWith(".") && !it.host.endsWith(".") })
         prefs.edit().putInt("serverSeedVersion", seedVersion).putBoolean("serverSeedLoaded", true).apply()
     }
 }
+
+private fun String?.equalsAnyIgnoreCase(values: Set<String>): Boolean = this != null && values.any { equals(it, ignoreCase = true) }
 
 internal fun normalizeDiscoveredServer(server: DiscoveredServer): DiscoveredServer? {
     val safeHost = server.host?.trim()?.removePrefix("https://")?.removePrefix("http://")
@@ -366,8 +379,8 @@ class ServerDiscoveryManager(private val context: Context, private val repositor
                     if (found.size >= maxNew) return@forEach
                     val host = item.host.trim().lowercase(Locale.ROOT)
                     if (!SafeNetworkTarget.isSafeHttpsHost(host)) return@forEach
-                    found.putIfAbsent(host, DiscoveredServer(host, item.name, item.version, item.languages, item.country,
-                        setOf("joinpeertube"), apiStatus = "unknown", totalVideos = item.totalVideos))
+                    if (host !in found) found[host] = DiscoveredServer(host, item.name, item.version, item.languages, item.country,
+                        setOf("joinpeertube"), apiStatus = "unknown", totalVideos = item.totalVideos)
                 }
                 examined += page.data.size
                 start += page.data.size
@@ -382,7 +395,8 @@ class ServerDiscoveryManager(private val context: Context, private val repositor
             imported.take(remaining).forEach { server ->
                 if (SafeNetworkTarget.isSafeHttpsHost(server.host)) {
                     val confirmed = runCatching { ApiFactory.config("https://${server.host}").customConfig() }.getOrNull()
-                    if (confirmed != null) found.putIfAbsent(server.host.lowercase(Locale.ROOT), server.copy(discoveredFrom = server.discoveredFrom + "remote_json", apiStatus = "available", lastCheckedAt = now))
+                    val normalizedHost = server.host.lowercase(Locale.ROOT)
+                    if (confirmed != null && normalizedHost !in found) found[normalizedHost] = server.copy(discoveredFrom = server.discoveredFrom + "remote_json", apiStatus = "available", lastCheckedAt = now)
                 }
             }
         }

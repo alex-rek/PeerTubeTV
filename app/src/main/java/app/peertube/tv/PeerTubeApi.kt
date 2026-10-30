@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package app.peertube.tv
 
 import retrofit2.Retrofit
@@ -26,7 +28,7 @@ data class LiveVideoSession(val startDate: String? = null, val endDate: String? 
 data class CaptionPage(val data: List<VideoCaption> = emptyList())
 data class VideoCaption(val language: CaptionLanguage? = null, val fileUrl: String? = null, val captionPath: String? = null, val automaticallyGenerated: Boolean? = null)
 data class CaptionLanguage(val id: String? = null, val label: String? = null)
-data class Video(val uuid: String, val name: String, val description: String? = "", val thumbnailPath: String? = null, val thumbnailUrl: String? = null, val views: Long = 0, val duration: Long = 0, val tags: List<String>? = null, val channel: Channel? = null, val account: Account? = null, val host: String? = null, val url: String? = null, val files: List<VideoFile>? = null, val streamingPlaylists: List<StreamingPlaylist>? = null, val publishedAt: String? = null, val isLive: Boolean? = null, val state: VideoState? = null, val category: VideoCategory? = null, val nsfw: Boolean = false) {
+data class Video(val uuid: String, val name: String, val description: String? = "", val thumbnailPath: String? = null, val thumbnailUrl: String? = null, val views: Long = 0, val duration: Long = 0, val tags: List<String>? = null, val channel: Channel? = null, val account: Account? = null, val host: String? = null, val url: String? = null, val files: List<VideoFile>? = null, val streamingPlaylists: List<StreamingPlaylist>? = null, val publishedAt: String? = null, val isLive: Boolean? = null, val state: VideoState? = null, val category: VideoCategory? = null, val nsfw: Boolean = false, val previewPath: String? = null) {
     private fun allMediaFiles(): List<VideoFile> = files.orEmpty() + streamingPlaylists.orEmpty().flatMap { it.files.orEmpty() }
 
     fun isAudioOnlySource(): Boolean {
@@ -71,6 +73,29 @@ data class Resolution(val id: Int = 0, val label: String? = null)
 data class StreamingPlaylist(val playlistUrl: String? = null, val files: List<VideoFile>? = null)
 data class VideoState(val id: Int? = null, val label: String? = null)
 data class VideoCategory(val id: Int? = null, val label: String? = null)
+
+/** Parses PeerTube's RFC 3339 timestamps on Android versions before java.time is available. */
+internal fun parseIsoDateMillis(value: String): Long? {
+    val match = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$""").matchEntire(value.trim()) ?: return null
+    val fractionMillis = (match.groupValues[2] + "000").take(3)
+    val timezone = match.groupValues[3].let { if (it == "Z") "+0000" else it.replace(":", "") }
+    val normalized = "${match.groupValues[1]}.$fractionMillis$timezone"
+    return runCatching {
+        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US).apply {
+            isLenient = false
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.parse(normalized)?.time
+    }.getOrNull()
+}
+
+/** Like runCatching, but does not turn coroutine cancellation into an ordinary failure. */
+internal suspend fun <T> runCatchingCancellable(block: suspend () -> T): Result<T> = try {
+    Result.success(block())
+} catch (cancelled: kotlinx.coroutines.CancellationException) {
+    throw cancelled
+} catch (error: Exception) {
+    Result.failure(error)
+}
 
 interface PeerTubeApi {
     @GET("api/v1/videos") suspend fun videos(@Query("sort") sort: String = "-publishedAt", @Query("count") count: Int = 30, @Query("search") search: String? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null): VideoPage
@@ -218,7 +243,14 @@ object ApiFactory {
 
     private fun installImageLoader(context: android.content.Context) {
         runCatching {
-            coil.Coil.setImageLoader(coil.ImageLoader.Builder(context.applicationContext).okHttpClient(safeHttpClient).build())
+            // PeerTube instances often serve thumbnails from a redirecting CDN or
+            // reverse proxy. Keep API redirects disabled, but allow Coil to follow
+            // HTTPS image redirects using the same proxy, DNS and TLS safeguards.
+            val imageClient = safeHttpClient.newBuilder()
+                .followRedirects(true)
+                .followSslRedirects(false)
+                .build()
+            coil.Coil.setImageLoader(coil.ImageLoader.Builder(context.applicationContext).okHttpClient(imageClient).build())
         }
     }
 
@@ -263,6 +295,7 @@ object ApiFactory {
 
     /** Shares the configured proxy-aware client with Media3 so HLS playlists and segments
      * follow the same proxy and authentication path as API and image requests. */
+    @androidx.media3.common.util.UnstableApi
     fun media3DataSourceFactory(): androidx.media3.datasource.DataSource.Factory =
         androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(safeHttpClient)
             .setUserAgent("PeerTubeTV")
@@ -275,11 +308,18 @@ object ApiFactory {
 
     fun image(server: String, path: String?): String? {
         val value = path?.trim()?.takeIf(String::isNotBlank) ?: return null
-        return when {
-            value.startsWith("https://", true) || value.startsWith("http://", true) -> value
-            value.startsWith("//") -> "https:$value"
-            else -> "${server.trimEnd('/')}/${value.trimStart('/')}"
-        }
+        val base = runCatching { java.net.URI(server.trimEnd('/') + "/") }.getOrNull() ?: return null
+        val candidate = when {
+            value.startsWith("//") -> runCatching { java.net.URI("https:$value") }.getOrNull()
+            else -> runCatching { base.resolve(value) }.getOrNull()
+        } ?: return null
+        if (candidate.scheme !in listOf("http", "https") || candidate.host.isNullOrBlank() || candidate.userInfo != null) return null
+        // Android blocks cleartext image requests. Upgrade old PeerTube/CDN URLs to
+        // HTTPS and let the fallback paths handle servers that don't publish them.
+        val secure = if (candidate.scheme.equals("http", true)) {
+            runCatching { java.net.URI("https", candidate.userInfo, candidate.host, candidate.port, candidate.path, candidate.query, candidate.fragment) }.getOrNull()
+        } else candidate
+        return secure?.toASCIIString()
     }
     fun directory(): InstanceDirectoryApi = directoryApi ?: synchronized(this) { directoryApi ?: retrofit("https://instances.joinpeertube.org/").create(InstanceDirectoryApi::class.java).also { directoryApi = it } }
     fun config(server: String): PeerTubeConfigApi = retrofit(server.trimEnd('/') + "/").create(PeerTubeConfigApi::class.java)

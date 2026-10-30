@@ -9,14 +9,5 @@
   {"host":"video.phyrone.de","name":"Phyrones PeerTube","version":"8.3.1","languages":[],"country":"DE","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","totalVideos":0},
   {"host":"video.linc.systems","name":"Video Linc.Systems","version":"6.3.1","languages":["ru","en"],"country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","totalVideos":37},
   {"host":"video.lrose.de","name":"PeerTube","version":"8.3.1","languages":["en","de"],"country":"DE","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","totalVideos":5},
-  {"host":"peervideo.ru","name":"PeerVideo RU","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10009},
-  {"host":"peertube.cluster.wtf","name":"PeerTube Cluster","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10008},
-  {"host":"angeltales.angellive.ru","name":"Angel Tales","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10007},
-  {"host":"video.pavel-english.ru","name":"Pavel English Video","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10006},
-  {"host":"video.radiodar.ru","name":"Radio Dar Video","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10005},
-  {"host":"angelsoft.angellive.ru","name":"Angelsoft","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10004},
-  {"host":"tube.ghk-academy.info","name":"GHK Academy","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10003},
-  {"host":"video.383.su","name":"383 Video","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10002},
-  {"host":"peertube.luanti.ru","name":"Luanti PeerTube","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":10001},
   {"host":"tube.4e6a.ru","name":"4e6a PeerTube","country":"RU","discoveredFrom":["joinpeertube_seed"],"apiStatus":"unknown","streamStatus":"unknown","priority":101}
 ]

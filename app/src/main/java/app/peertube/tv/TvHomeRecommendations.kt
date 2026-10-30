@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.drawable.Drawable
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Build
 import android.provider.BaseColumns
@@ -16,6 +17,7 @@ import androidx.tvprovider.media.tv.PreviewProgram
 import androidx.tvprovider.media.tv.TvContractCompat
 
 /** Publishes the app's current video recommendations to the Android TV launcher. */
+@SuppressLint("RestrictedApi") // AndroidX tvprovider marks launcher integration APIs as restricted despite providing them for apps.
 object TvHomeRecommendations {
     private const val PREFS = "peertube"
     private const val CHANNEL_ID = "androidTvRecommendationsChannelId"
@@ -59,11 +61,8 @@ object TvHomeRecommendations {
                     .appendQueryParameter("channelHost", video.channel?.host ?: video.account?.host ?: video.host.orEmpty())
                     .appendQueryParameter("channelDisplayName", video.channel?.displayName ?: video.account?.displayName.orEmpty())
                     .build()
-                val artworkPath = video.thumbnailUrl?.takeIf(String::isNotBlank) ?: video.thumbnailPath
-                val artwork = artworkPath?.let { path ->
-                    if (path.startsWith("http://") || path.startsWith("https://")) path
-                    else "${sourceServer.trimEnd('/')}/${path.trimStart('/')}"
-                }
+                val artwork = listOfNotNull(video.thumbnailUrl, video.thumbnailPath, video.previewPath)
+                    .firstNotNullOfOrNull { ApiFactory.image(sourceServer, it) }
                 val builder = PreviewProgram.Builder()
                     .setChannelId(channelId)
                     .setType(TvContractCompat.PreviewPrograms.TYPE_CLIP)
