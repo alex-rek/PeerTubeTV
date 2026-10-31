@@ -127,7 +127,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             return@LaunchedEffect
         }
         try {
-            val details = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).video(uuid) } }.getOrNull()
+            val detailsResult = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).video(uuid) } }
+            val details = detailsResult.getOrNull()
             if (details != null) {
                 videoDescription = details.description.orEmpty()
                 if (url == null) {
@@ -140,7 +141,21 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     }
                 }
             } else if (url == null) {
-                errorText = context.getString(R.string.player_fetch_error, context.getString(R.string.error_request))
+                val cause = detailsResult.exceptionOrNull()
+                val causeChain = generateSequence(cause) { it.cause }.toList()
+                val tlsFailure = causeChain.any { error ->
+                    error is javax.net.ssl.SSLException ||
+                        error.message?.contains("chain validation", ignoreCase = true) == true
+                }
+                val reason = when (cause) {
+                    is retrofit2.HttpException -> "HTTP ${cause.code()}"
+                    else -> if (tlsFailure) {
+                        context.getString(R.string.player_tls_error, runCatching { java.net.URI(server).host }.getOrNull() ?: server)
+                    } else {
+                        cause?.localizedMessage?.takeIf(String::isNotBlank) ?: context.getString(R.string.error_request)
+                    }
+                }
+                errorText = context.getString(R.string.player_fetch_error, reason)
             }
             subtitles = runCatchingCancellable { withContext(Dispatchers.IO) { ApiFactory.create(server).captions(uuid).data } }.getOrDefault(emptyList())
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -252,7 +267,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         mutableStateOf(if (!playerPreferences.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceTranslationLanguage
         else playerPreferences.getString("subtitleTranslationLanguage", interfaceTranslationLanguage) ?: interfaceTranslationLanguage)
     }
-    var subtitleTranslationEnabled by remember(url) { mutableStateOf(false) }
+    var subtitleTranslationEnabled by remember(url) { mutableStateOf(playerPreferences.getBoolean("subtitleTranslationEnabledByDefault", false)) }
     val translatedCues = remember(url) { mutableStateListOf<TranslatedCue>() }
     val sourceSubtitleCues = remember(url) { mutableStateListOf<TranslatedCue>() }
     var translationProgress by remember(url) { mutableIntStateOf(0) }
@@ -726,7 +741,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         }
     }
     LaunchedEffect(subtitles, selectedSubtitleIndex, subtitleTranslationLanguage) {
-        if (autoTranslationConsidered || subtitles.isEmpty()) return@LaunchedEffect
+        if (!playerPreferences.getBoolean("subtitleTranslationEnabledByDefault", false) || autoTranslationConsidered || subtitles.isEmpty()) return@LaunchedEffect
         autoTranslationConsidered = true
         val selectedCaption = subtitles.getOrNull(selectedSubtitleIndex)?.takeIf { !it.language?.id.isNullOrBlank() }
         val sourceIndex = selectedCaption?.let(subtitles::indexOf)

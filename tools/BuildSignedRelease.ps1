@@ -8,7 +8,7 @@ $keyAlias = 'peertubetv'
 $keyAlreadyExists = Test-Path -LiteralPath $keystorePath
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'PeerTubeTV 1.0.6 - Sign release'
+$form.Text = 'PeerTubeTV - Sign release'
 $form.Size = New-Object System.Drawing.Size(530, 270)
 $form.StartPosition = 'CenterScreen'
 $form.TopMost = $true
@@ -96,6 +96,8 @@ $password = $null
 $confirmation = $null
 
 $buildExitCode = 1
+$buildLogPath = Join-Path $projectRoot 'release-build.log'
+Set-Content -LiteralPath $buildLogPath -Value "PeerTubeTV release build started: $(Get-Date -Format o)" -Encoding UTF8
 try {
     if (-not $keyAlreadyExists) {
         & $keytool -genkeypair -v -keystore $keystorePath -alias $keyAlias -keyalg RSA -keysize 2048 -validity 10000 -dname 'CN=PeerTubeTV Release' -storepass:env KEYTOOL_STOREPASS -keypass:env KEYTOOL_KEYPASS
@@ -105,10 +107,11 @@ try {
     Push-Location $projectRoot
     $env:JAVA_HOME = $javaHome
     $env:PATH = "$javaHome\bin;$env:PATH"
-    & (Join-Path $projectRoot 'gradlew.bat') ':app:assembleRelease'
+    & (Join-Path $projectRoot 'gradlew.bat') ':app:assembleRelease' 2>&1 | Tee-Object -FilePath $buildLogPath -Append
     $buildExitCode = $LASTEXITCODE
 } catch {
     Write-Error $_
+    Add-Content -LiteralPath $buildLogPath -Value "`r`nBuild script error: $($_.Exception.Message)"
 } finally {
     if ((Get-Location).Path -eq $projectRoot) { Pop-Location }
     Remove-Item Env:KEYSTORE_PATH, Env:KEY_ALIAS, Env:KEYSTORE_PASSWORD, Env:KEY_PASSWORD, Env:KEYTOOL_STOREPASS, Env:KEYTOOL_KEYPASS -ErrorAction SilentlyContinue
@@ -117,6 +120,8 @@ try {
 if ($buildExitCode -eq 0) {
     [System.Windows.Forms.MessageBox]::Show("Signed APK built successfully.`r`nKeystore: $keystorePath`r`nAPK: app\build\outputs\apk\release\app-release.apk`r`nKeep the keystore and password: future updates must use this same key.", 'Done', 'OK', 'Information') | Out-Null
 } else {
-    [System.Windows.Forms.MessageBox]::Show("Build failed with exit code $buildExitCode. Check the terminal for details.", 'Build error', 'OK', 'Error') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Build failed with exit code $buildExitCode.`r`nDetails saved to:`r`n$buildLogPath", 'Build error', 'OK', 'Error') | Out-Null
+    Write-Host "Build failed. Details: $buildLogPath" -ForegroundColor Red
+    Read-Host 'Press Enter to close this window'
 }
 exit $buildExitCode

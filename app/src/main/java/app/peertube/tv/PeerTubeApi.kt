@@ -99,7 +99,7 @@ internal suspend fun <T> runCatchingCancellable(block: suspend () -> T): Result<
 
 interface PeerTubeApi {
     @GET("api/v1/videos") suspend fun videos(@Query("sort") sort: String = "-publishedAt", @Query("count") count: Int = 30, @Query("search") search: String? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null): VideoPage
-    @GET("api/v1/search/videos") suspend fun searchVideos(@Query("search") search: String, @Query("start") start: Int = 0, @Query("count") count: Int = 40, @Query("sort") sort: String? = "-match", @Query("nsfw") includeSensitive: Boolean? = null): VideoPage
+    @GET("api/v1/search/videos") suspend fun searchVideos(@Query("search") search: String, @Query("start") start: Int = 0, @Query("count") count: Int = 40, @Query("sort") sort: String? = "-match", @Query("nsfw") nsfw: String? = null): VideoPage
     @GET("api/v1/server/following") suspend fun serverFollowing(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/server/followers") suspend fun serverFollowers(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/video-channels") suspend fun videoChannels(@Query("start") start: Int = 0, @Query("count") count: Int = 100): PeerTubeChannelPage
@@ -122,11 +122,12 @@ interface InstanceDirectoryApi {
 }
 
 interface PeerTubeConfigApi {
+    @GET("api/v1/config") suspend fun publicConfig(): com.google.gson.JsonObject
     @GET("api/v1/config/custom") suspend fun customConfig(): PeerTubeCustomConfig
 }
 
 interface SepiaSearchApi {
-    @GET("api/v1/search/videos") suspend fun videos(@Query("search") search: String? = null, @Query("start") start: Int = 0, @Query("count") count: Int = 30, @Query("sort") sort: String? = null, @Query("categoryOneOf") categoryOneOf: Int? = null, @Query("durationMin") durationMin: Int? = null, @Query("durationMax") durationMax: Int? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("nsfw") includeSensitive: Boolean? = null): VideoPage
+    @GET("api/v1/search/videos") suspend fun videos(@Query("search") search: String? = null, @Query("start") start: Int = 0, @Query("count") count: Int = 30, @Query("sort") sort: String? = null, @Query("categoryOneOf") categoryOneOf: Int? = null, @Query("durationMin") durationMin: Int? = null, @Query("durationMax") durationMax: Int? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("nsfw") nsfw: String? = null): VideoPage
 }
 
 data class PeerSeekPage(val videos: List<PeerSeekVideo> = emptyList(), val total: Int = 0, val page: Int = 1, val size: Int = 24)
@@ -147,14 +148,16 @@ data class PeerSeekVideo(
             val obj = element.asJsonObject
             return keys.firstNotNullOfOrNull { key -> obj.get(key)?.takeUnless { it.isJsonNull }?.asString }
         }
-        val host = (field(instance, "host", "name", "url") ?: instance?.takeIf { it.isJsonPrimitive }?.asString)
+        // `name` may be a display label, not a hostname. Treating it as an
+        // origin sends the player to a made-up https://<display name> address.
+        val host = (field(instance, "host", "domain", "hostname", "url") ?: instance?.takeIf { it.isJsonPrimitive }?.asString)
             ?.removePrefix("https://")?.removePrefix("http://")?.trimEnd('/')
         val channelName = field(channel, "name", "displayName", "handle")
         val channelDisplayName = field(channel, "displayName", "name")
-        val channelHost = field(channel, "host") ?: host
+        val channelHost = field(channel, "host", "domain", "hostname") ?: host
         val accountName = field(account, "name", "displayName", "handle")
         val accountDisplayName = field(account, "displayName", "name")
-        val accountHost = field(account, "host") ?: host
+        val accountHost = field(account, "host", "domain", "hostname") ?: host
         return Video(
             uuid = videoId,
             name = title?.takeIf(String::isNotBlank) ?: name?.takeIf(String::isNotBlank) ?: return null,

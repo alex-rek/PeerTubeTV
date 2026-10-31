@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.Inet4Address
 import java.net.Inet6Address
 import java.net.InetAddress
@@ -84,18 +85,30 @@ class SearchAggregator(private val providers: Map<SearchSource, suspend (SearchR
         val sources = settings.order.filter { it in settings.enabled && (it != SearchSource.CUSTOM || settings.customIndexUrls.isNotEmpty()) }
         val errors = linkedMapOf<SearchSource, String>()
         val batches = mutableListOf<Pair<SearchSource, SearchBatch>>()
-        suspend fun call(source: SearchSource): Pair<SearchSource, SearchBatch>? = try {
+        suspend fun call(source: SearchSource): Pair<SearchSource, SearchBatch>? {
             val provider = providers[source] ?: return null
-            source to withTimeout(settings.timeoutMs) { provider(request) }
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-        catch (e: Exception) { errors[source] = e.localizedMessage ?: e.javaClass.simpleName; null }
+            val timeout = if (source == SearchSource.SEPIA && request.includeSensitive) maxOf(settings.timeoutMs, 30_000L) else settings.timeoutMs
+            val batch = try {
+                withTimeoutOrNull(timeout) { provider(request) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                errors[source] = e.localizedMessage ?: e.javaClass.simpleName
+                return null
+            }
+            if (batch == null) {
+                errors[source] = "Timed out waiting for ${timeout} ms"
+                return null
+            }
+            return source to batch
+        }
 
         when (settings.mode) {
             "sequential" -> for (source in sources) {
                 call(source)?.let(batches::add)
-                // A full page of regular videos does not satisfy an NSFW-enabled
-                // search: the sensitive matches may only exist in a later source.
-                if (!request.includeSensitive && batches.sumOf { it.second.videos.size } >= pageSize) break
+                val enough = batches.sumOf { it.second.videos.size } >= pageSize
+                val sensitiveFound = batches.any { (_, batch) -> batch.videos.any(Video::nsfw) }
+                if (enough && (!request.includeSensitive || sensitiveFound)) break
             }
             "parallel" -> {
                 val semaphore = Semaphore(settings.maxParallel)
@@ -107,7 +120,9 @@ class SearchAggregator(private val providers: Map<SearchSource, suspend (SearchR
             else -> {
                 for (source in sources) {
                     call(source)?.let(batches::add)
-                    if (!request.includeSensitive && batches.sumOf { it.second.videos.size } >= settings.sufficientResults) break
+                    val enough = batches.sumOf { it.second.videos.size } >= settings.sufficientResults
+                    val sensitiveFound = batches.any { (_, batch) -> batch.videos.any(Video::nsfw) }
+                    if (enough && (!request.includeSensitive || sensitiveFound)) break
                 }
             }
         }
@@ -394,7 +409,7 @@ class ServerDiscoveryManager(private val context: Context, private val repositor
             val remaining = (maxNew - found.size).coerceAtLeast(0)
             imported.take(remaining).forEach { server ->
                 if (SafeNetworkTarget.isSafeHttpsHost(server.host)) {
-                    val confirmed = runCatching { ApiFactory.config("https://${server.host}").customConfig() }.getOrNull()
+                    val confirmed = runCatching { ApiFactory.config("https://${server.host}").publicConfig() }.getOrNull()
                     val normalizedHost = server.host.lowercase(Locale.ROOT)
                     if (confirmed != null && normalizedHost !in found) found[normalizedHost] = server.copy(discoveredFrom = server.discoveredFrom + "remote_json", apiStatus = "available", lastCheckedAt = now)
                 }
@@ -432,11 +447,10 @@ class ServerDiscoveryManager(private val context: Context, private val repositor
                         if (found.size >= maxNew) break
                         if (candidate in visited || !SafeNetworkTarget.isSafeHttpsHost(candidate)) continue
                         // Confirm PeerTube API behavior on-device before admitting a federation result.
-                        val verified = runCatching { ApiFactory.config("https://$candidate").customConfig() }.getOrNull() ?: continue
+                        runCatching { ApiFactory.config("https://$candidate").publicConfig() }.getOrNull() ?: continue
                         val record = DiscoveredServer(candidate, version = null, discoveredFrom = setOf("federation:$host"), apiStatus = "available", lastCheckedAt = now)
                         found[candidate] = record
                         next += candidate
-                        if (verified.instance?.languages?.isNotEmpty() == true) found[candidate] = found[candidate]!!.copy(languages = verified.instance.languages)
                         kotlinx.coroutines.delay(400)
                     }
                 }
@@ -502,7 +516,7 @@ class ServerAvailabilityManager(private val repository: ServerRepository? = null
     suspend fun checkApi(host: String): AvailabilityCheck = withContext(Dispatchers.IO) {
         if (!SafeNetworkTarget.isSafeHttpsHost(host)) return@withContext AvailabilityCheck("unknown", "unsafe_or_invalid_host")
         try {
-            withTimeout(10_000) { ApiFactory.config("https://$host").customConfig() }
+            withTimeout(10_000) { ApiFactory.config("https://$host").publicConfig() }
             AvailabilityCheck("available")
         } catch (e: kotlinx.coroutines.CancellationException) { throw e }
         catch (e: retrofit2.HttpException) { AvailabilityCheck(if (e.code() in setOf(404, 410)) "unavailable" else "unknown", "http_${e.code()}", e.code()) }

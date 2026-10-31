@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -193,11 +194,22 @@ fun TranslatedVideoMetadataText(
     overflow: TextOverflow = TextOverflow.Clip
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val preferences = remember(context) { context.applicationContext.getSharedPreferences("peertube", Context.MODE_PRIVATE) }
+    var translationEnabled by remember(preferences) {
+        mutableStateOf(preferences.getBoolean("translateVideoMetadataEnabled", false))
+    }
+    DisposableEffect(preferences) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "translateVideoMetadataEnabled") translationEnabled = preferences.getBoolean(key, false)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     val resolvedTargetLanguage = targetLanguage.ifBlank { currentInterfaceTranslationLanguage(context) }
     var displayText by remember(text, resolvedTargetLanguage) { mutableStateOf(text) }
-    LaunchedEffect(text, resolvedTargetLanguage) {
+    LaunchedEffect(text, resolvedTargetLanguage, translationEnabled) {
         displayText = text
-        displayText = translateVideoMetadata(context, text, resolvedTargetLanguage)
+        if (translationEnabled) displayText = translateVideoMetadata(context, text, resolvedTargetLanguage)
     }
     Text(displayText, modifier = modifier, style = style, color = color, fontSize = fontSize, maxLines = maxLines, minLines = minLines, overflow = overflow)
 }
