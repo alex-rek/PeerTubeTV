@@ -18,4 +18,6 @@
     <string name="watched_threshold_three_minutes">3分</string>
     <string name="watched_threshold_half">半分</string>
     <string name="watched_threshold_complete">動画全体</string>
+    <string name="update_empty_file">ダウンロードした APK は空です。</string>
+    <string name="update_checksum_mismatch">ダウンロードした APK の SHA-256 検証に失敗しました。</string>
 </resources>

@@ -18,4 +18,6 @@
     <string name="watched_threshold_three_minutes">3 मिनट</string>
     <string name="watched_threshold_half">आधा</string>
     <string name="watched_threshold_complete">पूरा वीडियो</string>
+    <string name="update_empty_file">डाउनलोड की गई APK फ़ाइल खाली है।</string>
+    <string name="update_checksum_mismatch">डाउनलोड की गई APK की SHA-256 जाँच विफल हुई।</string>
 </resources>

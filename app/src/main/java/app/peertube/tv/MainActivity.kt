@@ -162,7 +162,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             availableUpdate = withContext(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
-                    GitHubUpdates.latestRelease(BuildConfig.VERSION_NAME)
+                    GitHubUpdates.latestRelease(this@MainActivity, BuildConfig.VERSION_NAME)
                 }.getOrNull()
             }
         }
@@ -199,7 +199,7 @@ class MainActivity : AppCompatActivity() {
         updateBusy = true
         lifecycleScope.launch {
             val result = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { GitHubUpdates.downloadApk(this@MainActivity, release.apkUrl) }
+                runCatching { GitHubUpdates.downloadApk(this@MainActivity, release.apkUrl, release.sha256) }
             }
             updateBusy = false
             result.onSuccess { apk ->

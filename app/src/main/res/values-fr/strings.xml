@@ -18,4 +18,6 @@
     <string name="watched_threshold_three_minutes">3 minutes</string>
     <string name="watched_threshold_half">La moitié</string>
     <string name="watched_threshold_complete">Vidéo entière</string>
+    <string name="update_empty_file">Le fichier APK téléchargé est vide.</string>
+    <string name="update_checksum_mismatch">La vérification SHA-256 de l’APK téléchargé a échoué.</string>
 </resources>

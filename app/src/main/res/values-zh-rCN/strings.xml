@@ -18,4 +18,6 @@
     <string name="watched_threshold_three_minutes">3 分钟</string>
     <string name="watched_threshold_half">一半</string>
     <string name="watched_threshold_complete">整个视频</string>
+    <string name="update_empty_file">下载的 APK 文件为空。</string>
+    <string name="update_checksum_mismatch">下载的 APK 未通过 SHA-256 校验。</string>
 </resources>
