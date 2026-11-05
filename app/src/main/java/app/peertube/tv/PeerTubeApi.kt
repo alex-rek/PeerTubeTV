@@ -75,8 +75,10 @@ data class VideoState(val id: Int? = null, val label: String? = null)
 data class VideoCategory(val id: Int? = null, val label: String? = null)
 
 private val ISO_DATE_REGEX = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$""")
-private val ISO_DATE_FORMATTER = ThreadLocal.withInitial {
-    java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US).apply {
+private val ISO_DATE_FORMATTER = object : ThreadLocal<java.text.SimpleDateFormat>() {
+    override fun initialValue(): java.text.SimpleDateFormat = java.text.SimpleDateFormat(
+        "yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US
+    ).apply {
         isLenient = false
         timeZone = java.util.TimeZone.getTimeZone("UTC")
     }
@@ -253,6 +255,7 @@ object ApiFactory {
         context?.let(::installImageLoader)
     }
 
+    @OptIn(coil3.annotation.DelicateCoilApi::class)
     private fun installImageLoader(context: android.content.Context) {
         runCatching {
             // PeerTube instances often serve thumbnails from a redirecting CDN or
@@ -262,7 +265,17 @@ object ApiFactory {
                 .followRedirects(true)
                 .followSslRedirects(false)
                 .build()
-            coil.Coil.setImageLoader(coil.ImageLoader.Builder(context.applicationContext).okHttpClient(imageClient).build())
+            val httpCacheDir = java.io.File(context.cacheDir, "thumbnail_http_cache").apply { mkdirs() }
+            val cachedImageClient = imageClient.newBuilder()
+                .cache(okhttp3.Cache(httpCacheDir, 50L * 1024L * 1024L))
+                .build()
+            coil3.SingletonImageLoader.setUnsafe(
+                coil3.ImageLoader.Builder(context.applicationContext)
+                    .components {
+                        add(coil3.network.okhttp.OkHttpNetworkFetcherFactory(callFactory = cachedImageClient))
+                    }
+                    .build()
+            )
         }
     }
 
