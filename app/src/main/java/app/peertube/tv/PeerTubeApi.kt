@@ -296,11 +296,19 @@ object ApiFactory {
         return builder.build()
     }
 
-    /** Shares the configured proxy-aware client with Media3 so HLS playlists and segments
-     * follow the same proxy and authentication path as API and image requests. */
+    internal fun buildMediaHttpClient(baseClient: OkHttpClient): OkHttpClient = baseClient.newBuilder()
+        .callTimeout(0, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .readTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(false)
+        .build()
+
+    /** Uses an unbounded call lifetime for media while retaining the proxy, DNS and TLS policy
+     * from the API client. Redirects remain HTTPS-only; each direct redirected connection uses
+     * the inherited Dns implementation and its public-address validation. */
     @androidx.media3.common.util.UnstableApi
     fun media3DataSourceFactory(): androidx.media3.datasource.DataSource.Factory =
-        androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(safeHttpClient)
+        androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(buildMediaHttpClient(safeHttpClient))
             .setUserAgent("PeerTubeTV")
 
     @Synchronized
