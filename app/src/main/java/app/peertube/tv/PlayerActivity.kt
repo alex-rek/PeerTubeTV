@@ -66,7 +66,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
 import android.net.Uri
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 class PlayerActivity : AppCompatActivity() {
@@ -87,7 +86,7 @@ class PlayerActivity : AppCompatActivity() {
         val channelDisplayName = intent.getStringExtra("channelDisplayName") ?: homeScreenLink?.getQueryParameter("channelDisplayName")
         val queueJson = intent.getStringExtra("playbackQueue").orEmpty()
         val queueType = object : TypeToken<List<PlaybackQueueItem>>() {}.type
-        val playbackQueue = runCatching { Gson().fromJson<List<PlaybackQueueItem>>(queueJson, queueType) ?: emptyList() }.getOrDefault(emptyList())
+        val playbackQueue = runCatching { PeerTubeGson.instance.fromJson<List<PlaybackQueueItem>>(queueJson, queueType) ?: emptyList() }.getOrDefault(emptyList())
         val queueIndex = intent.getIntExtra("queueIndex", -1)
         val afterVideoAction = intent.getStringExtra("afterVideoAction") ?: "finish"
         val playerOverlayDurationSeconds = intent.getIntExtra("playerOverlayDurationSeconds", 3).let { if (it == 3 || it == 5 || it == 10) it else 3 }
@@ -605,7 +604,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         val current = readFavoriteVideos(context).toMutableList()
         if (current.any { it.uuid == favoriteVideo.uuid }) current.removeAll { it.uuid == favoriteVideo.uuid }
         else current.add(favoriteVideo)
-        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("favorites", Gson().toJson(current)).apply()
+        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("favorites", PeerTubeGson.instance.toJson(current)).apply()
         isFavorite = current.any { it.uuid == favoriteVideo.uuid }
     }
     fun toggleSubscription() {
@@ -615,7 +614,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         val existing = current.firstOrNull { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
         if (existing != null) current.remove(existing)
         else current.add(VideoSubscription(name, host, channelDisplayName?.takeIf(String::isNotBlank) ?: name))
-        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("subscriptions", Gson().toJson(current)).apply()
+        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("subscriptions", PeerTubeGson.instance.toJson(current)).apply()
         isSubscribed = existing == null
     }
     fun activateControl(index: Int) {
@@ -1381,14 +1380,14 @@ private fun formatPlayerTime(timeMs: Long): String {
 private fun readFavoriteVideos(context: Context): List<Video> {
     val type = object : TypeToken<List<Video>>() {}.type
     return runCatching {
-        Gson().fromJson<List<Video>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("favorites", "[]"), type) ?: emptyList()
+        PeerTubeGson.instance.fromJson<List<Video>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("favorites", "[]"), type) ?: emptyList()
     }.getOrDefault(emptyList())
 }
 
 private fun readSavedSubscriptions(context: Context): List<VideoSubscription> {
     val type = object : TypeToken<List<VideoSubscription>>() {}.type
     return runCatching {
-        Gson().fromJson<List<VideoSubscription>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("subscriptions", "[]"), type) ?: emptyList()
+        PeerTubeGson.instance.fromJson<List<VideoSubscription>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("subscriptions", "[]"), type) ?: emptyList()
     }.getOrDefault(emptyList())
 }
 
@@ -1452,10 +1451,10 @@ private fun persistWatchProgress(context: android.content.Context, uuid: String,
     val prefs = context.getSharedPreferences("peertube", 0)
     val type = object : TypeToken<MutableMap<String, Long>>() {}.type
     val positions = runCatching {
-        Gson().fromJson<MutableMap<String, Long>>(prefs.getString("watchProgressMs", "{}"), type)?.toMutableMap() ?: mutableMapOf()
+        PeerTubeGson.instance.fromJson<MutableMap<String, Long>>(prefs.getString("watchProgressMs", "{}"), type)?.toMutableMap() ?: mutableMapOf()
     }.getOrDefault(mutableMapOf())
     positions[uuid] = positionMs.coerceAtLeast(0L)
-    prefs.edit().putString("watchProgressMs", Gson().toJson(positions)).apply()
+    prefs.edit().putString("watchProgressMs", PeerTubeGson.instance.toJson(positions)).apply()
 }
 
 private fun isWatchedThresholdMet(threshold: String, positionMs: Long, durationMs: Long): Boolean {
@@ -1473,18 +1472,18 @@ private fun markVideoWatched(context: android.content.Context, uuid: String) {
     val prefs = context.getSharedPreferences("peertube", 0)
     val type = object : TypeToken<MutableList<String>>() {}.type
     val watched = runCatching {
-        Gson().fromJson<MutableList<String>>(prefs.getString("watchedVideoIds", "[]"), type)?.toMutableList() ?: mutableListOf()
+        PeerTubeGson.instance.fromJson<MutableList<String>>(prefs.getString("watchedVideoIds", "[]"), type)?.toMutableList() ?: mutableListOf()
     }.getOrDefault(mutableListOf())
     if (uuid !in watched) {
         watched.add(uuid)
-        prefs.edit().putString("watchedVideoIds", Gson().toJson(watched)).apply()
+        prefs.edit().putString("watchedVideoIds", PeerTubeGson.instance.toJson(watched)).apply()
     }
 }
 
 private fun readWatchProgress(context: android.content.Context, uuid: String): Long {
     val type = object : TypeToken<Map<String, Long>>() {}.type
     val positions = runCatching {
-        Gson().fromJson<Map<String, Long>>(context.getSharedPreferences("peertube", 0).getString("watchProgressMs", "{}"), type) ?: emptyMap()
+        PeerTubeGson.instance.fromJson<Map<String, Long>>(context.getSharedPreferences("peertube", 0).getString("watchProgressMs", "{}"), type) ?: emptyMap()
     }.getOrDefault(emptyMap())
     return positions[uuid]?.coerceAtLeast(0L) ?: 0L
 }

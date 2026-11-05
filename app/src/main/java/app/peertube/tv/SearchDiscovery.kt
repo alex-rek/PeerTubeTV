@@ -4,7 +4,6 @@ import android.content.Context
 import android.app.job.JobInfo
 import android.app.job.JobScheduler
 import android.content.ComponentName
-import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
@@ -42,7 +41,7 @@ class SearchSettingsRepository(context: Context) {
     fun read(): SearchSettings {
         val enabledKeys = prefs.getString("searchEnabledSources", "sepia,peerseek,federated,direct,local")!!.split(',').toSet()
         val orderKeys = prefs.getString("searchSourceOrder", "sepia,peerseek,custom,federated,direct,local")!!.split(',')
-        val custom = runCatching { Gson().fromJson<List<String>>(prefs.getString("customSearchIndexes", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
+        val custom = runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs.getString("customSearchIndexes", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
         return SearchSettings(
             enabled = enabledKeys.mapNotNullTo(linkedSetOf(), SearchSource::parse),
             order = (orderKeys.mapNotNull(SearchSource::parse) + SearchSource.entries).distinct(),
@@ -63,7 +62,7 @@ class SearchSettingsRepository(context: Context) {
     fun setOrder(order: List<SearchSource>) = prefs.edit().putString("searchSourceOrder", order.distinct().joinToString(",") { it.key }).apply()
     fun setMode(value: String) = prefs.edit().putString("searchExecutionMode", value.takeIf { it in setOf("sequential", "parallel", "hybrid") } ?: "hybrid").apply()
     fun setSufficientResults(value: Int) = prefs.edit().putInt("searchSufficientResults", value.coerceIn(5, 100)).apply()
-    fun setCustomIndexUrls(urls: List<String>) = prefs.edit().putString("customSearchIndexes", Gson().toJson(urls.map(String::trim).filter(String::isNotBlank).distinct().take(10))).apply()
+    fun setCustomIndexUrls(urls: List<String>) = prefs.edit().putString("customSearchIndexes", PeerTubeGson.instance.toJson(urls.map(String::trim).filter(String::isNotBlank).distinct().take(10))).apply()
     fun setAvailabilityFilter(value: String) = prefs.edit().putString("availabilityFilter", value.takeIf { it in setOf("all", "unknown_or_available", "available_only") } ?: "unknown_or_available").apply()
     fun setIncludeSensitive(value: Boolean) = prefs.edit().putBoolean("searchIncludeSensitive", value).apply()
     fun setSensitiveDisplayMode(value: String) = prefs.edit().putString("sensitiveDisplayMode", value.takeIf { it in setOf("hide", "blur", "warning", "show") } ?: "blur").apply()
@@ -162,7 +161,7 @@ data class DiscoveredServer(
 
 class ServerRepository(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("peertube", Context.MODE_PRIVATE)
-    private val gson = Gson()
+    private val gson = PeerTubeGson.instance
     @Synchronized fun all(): List<DiscoveredServer> = runCatching {
         gson.fromJson<List<DiscoveredServer>>(prefs.getString("discoveredServers", "[]"), object : TypeToken<List<DiscoveredServer>>() {}.type)
             .orEmpty().mapNotNull { it?.let(::normalizeDiscoveredServer) }
@@ -331,8 +330,8 @@ class CustomSearchIndexClient {
             val videos = list?.asJsonArray?.mapNotNull { item ->
                 runCatching {
                     val json = item.asJsonObject
-                    if (json.has("uuid") && json.has("name")) Gson().fromJson<Video>(json, Video::class.java)
-                    else Gson().fromJson<PeerSeekVideo>(json, PeerSeekVideo::class.java).asVideo()
+                    if (json.has("uuid") && json.has("name")) PeerTubeGson.instance.fromJson<Video>(json, Video::class.java)
+                    else PeerTubeGson.instance.fromJson<PeerSeekVideo>(json, PeerSeekVideo::class.java).asVideo()
                 }.getOrNull()
             }.orEmpty()
             SearchBatch(videos, root.get("total")?.asInt, root.get("nextPage")?.takeUnless(JsonElement::isJsonNull)?.asInt)
@@ -500,7 +499,7 @@ class ServerDiscoveryManager(private val context: Context, private val repositor
             }
             val root = JsonParser.parseString(output.toString(Charsets.UTF_8.name()))
             val list = if (root.isJsonArray) root.asJsonArray else root.asJsonObject.get("servers")?.asJsonArray ?: root.asJsonObject.get("data")?.asJsonArray
-            list?.mapNotNull { element -> runCatching { if (element.isJsonPrimitive) DiscoveredServer(host = element.asString) else Gson().fromJson<DiscoveredServer>(element, DiscoveredServer::class.java) }.getOrNull() }.orEmpty()
+            list?.mapNotNull { element -> runCatching { if (element.isJsonPrimitive) DiscoveredServer(host = element.asString) else PeerTubeGson.instance.fromJson<DiscoveredServer>(element, DiscoveredServer::class.java) }.getOrNull() }.orEmpty()
         }
     }
 

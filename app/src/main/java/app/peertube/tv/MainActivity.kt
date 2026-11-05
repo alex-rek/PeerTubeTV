@@ -105,7 +105,6 @@ import java.net.URI
 import java.util.Locale
 import java.text.DateFormat
 import java.text.SimpleDateFormat
-import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
 private val supportedUiLanguages = listOf("en", "ru", "es", "fr", "de", "pt", "it", "zh-CN", "ja", "hi", "ar")
@@ -477,9 +476,9 @@ class HomeModel : ViewModel() {
         recommendationBasis = prefs?.getString("recommendationBasis", "history")?.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         recommendationLanguage = prefs?.getString("recommendationLanguage", "country")?.takeIf { it == "country" || it in Locale.getISOLanguages() } ?: "country"
         watchedVideoIds.clear()
-        runCatching { watchedVideoIds.addAll(Gson().fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
+        runCatching { watchedVideoIds.addAll(PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
         excludedRecommendationIds.clear()
-        runCatching { excludedRecommendationIds.addAll(Gson().fromJson<List<String>>(prefs?.getString("excludedRecommendationIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
+        runCatching { excludedRecommendationIds.addAll(PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("excludedRecommendationIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
         val savedExitMode = prefs?.getString("exitMode", null)
         val exitModeUserSelected = prefs?.getBoolean("exitModeUserSelected", false) ?: false
         val exitModeDefaultInitialized = prefs?.getBoolean("exitModeDefaultInitialized", false) ?: false
@@ -503,7 +502,7 @@ class HomeModel : ViewModel() {
         contextMenuHoldSeconds = (prefs?.getFloat("contextMenuHoldSeconds", 1f) ?: 1f).coerceIn(1f, 5f)
         seekStepSeconds = (prefs?.getInt("seekStepSeconds", 10) ?: 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10
         launchTab = prefs?.getString("launchTab", "home")?.takeIf { it in listOf("home", "popular", "live", "subscriptions", "channels", "recommendations", "instances", "history", "favorites") } ?: "home"
-        hiddenSections = runCatching { Gson().fromJson<List<String>>(prefs?.getString("hiddenSections", "[]"), object : TypeToken<List<String>>() {}.type)?.toSet() ?: emptySet() }.getOrDefault(emptySet())
+        hiddenSections = runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("hiddenSections", "[]"), object : TypeToken<List<String>>() {}.type)?.toSet() ?: emptySet() }.getOrDefault(emptySet())
         selectedTheme = prefs?.getString("selectedTheme", "peertube")?.takeIf { it in listOf("peertube", "turquoise", "gray", "red") } ?: "peertube"
         showSearchIcon = prefs?.getBoolean("showSearchIcon", true) ?: true
         uiScale = (prefs?.getFloat("uiScale", 0.85f) ?: 0.85f).coerceIn(0.85f, 1.4f)
@@ -569,18 +568,18 @@ class HomeModel : ViewModel() {
             else -> "auto"
         }
         val type = object : TypeToken<List<Video>>() {}.type
-        runCatching { history.addAll(Gson().fromJson<List<Video>>(prefs?.getString("history", "[]"), type) ?: emptyList()) }
+        runCatching { history.addAll(PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("history", "[]"), type) ?: emptyList()) }
         val historyTimeType = object : TypeToken<Map<String, Long>>() {}.type
-        runCatching { historyViewedAt.putAll(Gson().fromJson<Map<String, Long>>(prefs?.getString("historyViewedAt", "{}"), historyTimeType) ?: emptyMap()) }
+        runCatching { historyViewedAt.putAll(PeerTubeGson.instance.fromJson<Map<String, Long>>(prefs?.getString("historyViewedAt", "{}"), historyTimeType) ?: emptyMap()) }
         history.forEach { if (it.uuid !in historyViewedAt) historyViewedAt[it.uuid] = System.currentTimeMillis() }
-        runCatching { favorites.addAll(Gson().fromJson<List<Video>>(prefs?.getString("favorites", "[]"), type) ?: emptyList()) }
+        runCatching { favorites.addAll(PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), type) ?: emptyList()) }
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
         runCatching {
-            subscriptions.addAll(Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
+            subscriptions.addAll(PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
                 .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
         }
     }
-    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("recommendationLanguage", recommendationLanguage)?.putString("watchedVideoIds", Gson().toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", Gson().toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", Gson().toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putString("serverSortMode", serverSortMode)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", Gson().toJson(history))?.putString("favorites", Gson().toJson(favorites))?.putString("subscriptions", Gson().toJson(subscriptions))?.apply() }
+    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("recommendationLanguage", recommendationLanguage)?.putString("watchedVideoIds", PeerTubeGson.instance.toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", PeerTubeGson.instance.toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", PeerTubeGson.instance.toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putString("serverSortMode", serverSortMode)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", PeerTubeGson.instance.toJson(history))?.putString("favorites", PeerTubeGson.instance.toJson(favorites))?.putString("subscriptions", PeerTubeGson.instance.toJson(subscriptions))?.apply() }
     fun updateRecommendationBasis(basis: String) {
         recommendationBasis = basis.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         save()
@@ -825,10 +824,10 @@ class HomeModel : ViewModel() {
     }
     fun syncWatchProgress() {
         val type = object : TypeToken<Map<String, Long>>() {}.type
-        val stored = runCatching { Gson().fromJson<Map<String, Long>>(prefs?.getString("watchProgressMs", "{}"), type) ?: emptyMap() }.getOrDefault(emptyMap())
+        val stored = runCatching { PeerTubeGson.instance.fromJson<Map<String, Long>>(prefs?.getString("watchProgressMs", "{}"), type) ?: emptyMap() }.getOrDefault(emptyMap())
         watchProgressMs.clear()
         watchProgressMs.putAll(stored)
-        val savedWatched = runCatching { Gson().fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
+        val savedWatched = runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
         watchedVideoIds.clear()
         watchedVideoIds.addAll(savedWatched)
         if (watchedRecommendationThreshold != "never") recommendations = recommendations.filterNot { it.uuid in watchedVideoIds }
@@ -846,7 +845,7 @@ class HomeModel : ViewModel() {
     }
     fun markVideoViewed(uuid: String) {
         historyViewedAt[uuid] = System.currentTimeMillis()
-        prefs?.edit()?.putString("historyViewedAt", Gson().toJson(historyViewedAt))?.apply()
+        prefs?.edit()?.putString("historyViewedAt", PeerTubeGson.instance.toJson(historyViewedAt))?.apply()
     }
     fun clearHistoryOlderThan(hours: Int) {
         val cutoff = System.currentTimeMillis() - hours * 60L * 60L * 1000L
@@ -855,18 +854,18 @@ class HomeModel : ViewModel() {
         removed.forEach(historyViewedAt::remove)
         recommendations = recommendations.filterNot { it.uuid in removed }
         save()
-        prefs?.edit()?.putString("historyViewedAt", Gson().toJson(historyViewedAt))?.apply()
+        prefs?.edit()?.putString("historyViewedAt", PeerTubeGson.instance.toJson(historyViewedAt))?.apply()
     }
     fun syncSubscriptions() {
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
-        val stored = runCatching { Gson().fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
+        val stored = runCatching { PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
             .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) } }.getOrDefault(emptyList())
         subscriptions.clear()
         subscriptions.addAll(stored)
     }
     fun syncFavorites() {
         val videoType = object : TypeToken<List<Video>>() {}.type
-        val stored = runCatching { Gson().fromJson<List<Video>>(prefs?.getString("favorites", "[]"), videoType) ?: emptyList() }.getOrDefault(emptyList())
+        val stored = runCatching { PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), videoType) ?: emptyList() }.getOrDefault(emptyList())
         favorites.clear()
         favorites.addAll(stored)
     }
@@ -1043,7 +1042,7 @@ class HomeModel : ViewModel() {
             if (!append) { videos = emptyList(); searchSourceErrors = emptyMap(); searchSourcesByVideo = emptyMap(); searchHasMore = false; availabilityByVideo = emptyMap() }
             try {
                 error = null
-                val savedCache = runCatching { Gson().fromJson<List<Video>>(prefs?.getString("lastSearchVideos", "[]"), object : TypeToken<List<Video>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
+                val savedCache = runCatching { PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("lastSearchVideos", "[]"), object : TypeToken<List<Video>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
                 val providers = linkedMapOf<SearchSource, suspend (SearchRequest) -> SearchBatch>()
                 providers[SearchSource.SEPIA] = { req ->
                     val result = ApiFactory.sepiaSearch().videos(
@@ -1139,7 +1138,7 @@ class HomeModel : ViewModel() {
                     searchSourcesByVideo = searchSourcesByVideo + outcome.sourcesByVideo
                     searchHasMore = outcome.hasMore
                     searchNextPage = page + 1
-                    if (outcome.errors.isEmpty() || result.isNotEmpty()) prefs?.edit()?.putString("lastSearchQuery", search)?.putString("lastSearchVideos", Gson().toJson(videos.take(100)))?.apply()
+                    if (outcome.errors.isEmpty() || result.isNotEmpty()) prefs?.edit()?.putString("lastSearchQuery", search)?.putString("lastSearchVideos", PeerTubeGson.instance.toJson(videos.take(100)))?.apply()
                     if (result.isEmpty() && outcome.errors.isNotEmpty()) error = "${outcome.errors.size} search source(s) failed: ${outcome.errors.entries.joinToString { "${it.key.key}: ${it.value}" }}"
                 }
             } catch (e: Exception) {
@@ -1560,7 +1559,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             .putExtra("channelName", video.channel?.name ?: video.account?.name)
             .putExtra("channelHost", video.channel?.host ?: video.account?.host ?: video.host ?: video.sourceServer(m.server).removePrefix("https://").removePrefix("http://"))
             .putExtra("channelDisplayName", video.channel?.displayName ?: video.account?.displayName ?: video.channel?.name ?: video.account?.name)
-            .putExtra("playbackQueue", Gson().toJson(playbackQueue))
+            .putExtra("playbackQueue", PeerTubeGson.instance.toJson(playbackQueue))
             .putExtra("queueIndex", queueIndex)
             .putExtra("afterVideoAction", m.afterVideoAction)
             .putExtra("playerOverlayDurationSeconds", m.playerOverlayDurationSeconds)
@@ -2215,12 +2214,12 @@ private fun writeSettingsBackupZip(context: android.content.Context, output: jav
             else -> return@forEach
         }
         item.addProperty("type", type)
-        item.add("value", Gson().toJsonTree(value))
+        item.add("value", PeerTubeGson.instance.toJsonTree(value))
         json.add(key, item)
     }
     java.util.zip.ZipOutputStream(output).use { zip ->
         zip.putNextEntry(java.util.zip.ZipEntry("settings.json"))
-        zip.write(Gson().toJson(json).toByteArray(Charsets.UTF_8))
+        zip.write(PeerTubeGson.instance.toJson(json).toByteArray(Charsets.UTF_8))
         zip.closeEntry()
     }
 }

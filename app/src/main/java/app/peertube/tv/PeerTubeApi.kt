@@ -194,7 +194,7 @@ data class NetworkProxySettings(
 )
 
 object ApiFactory {
-    private val gsonConverter = GsonConverterFactory.create()
+    private val gsonConverter = GsonConverterFactory.create(PeerTubeGson.instance)
     private val systemProxySelector = java.net.ProxySelector.getDefault()
     @Volatile private var proxySettings = NetworkProxySettings()
     @Volatile private var safeHttpClient = buildHttpClient(proxySettings)
