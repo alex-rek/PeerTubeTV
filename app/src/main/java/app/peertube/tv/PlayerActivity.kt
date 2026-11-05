@@ -363,8 +363,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         context.startActivity(target)
     }
 
-    val trackSelector = remember(url) { DefaultTrackSelector(context) }
-    val loadControl = remember(bufferProfile) {
+    val trackSelector = remember(context) { DefaultTrackSelector(context) }
+    val loadControl = remember(context, bufferProfile) {
         val (minBuffer, maxBuffer) = when (bufferProfile) {
             "small" -> 15_000 to 45_000
             "large" -> 60_000 to 180_000
@@ -374,130 +374,104 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         DefaultLoadControl.Builder().setBufferDurationsMs(minBuffer, maxBuffer, 2_500, 5_000).build()
     }
     val latestOnVideoEnded by rememberUpdatedState(onVideoEnded)
-    val player = remember(url, bufferProfile, playerVolume) {
+    val player = remember(context) {
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(ApiFactory.media3DataSourceFactory())
         ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory)
             .setHandleAudioBecomingNoisy(true)
             .setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .build(),
-                true
-            )
-            volume = playerVolume / 100f
-            val exoPlayer = this
-            addListener(object : Player.Listener {
-                private fun updateScreenAwakeState() {
-                    keepScreenAwake = exoPlayer.playWhenReady &&
-                        exoPlayer.playbackState != Player.STATE_IDLE &&
-                        exoPlayer.playbackState != Player.STATE_ENDED
-                }
-
-                override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-                    updateScreenAwakeState()
-                }
-
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    updateScreenAwakeState()
-                    isBuffering = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
-                    if (playbackState == Player.STATE_ENDED) {
-                        if (!uuid.isNullOrBlank() && watchedRecommendationThreshold != "never" && !thresholdMarked) {
-                            markVideoWatched(context, uuid)
-                            thresholdMarked = true
-                        }
-                        if (!uuid.isNullOrBlank()) persistWatchProgress(context, uuid, 0L, flushNow = true)
-                        if (afterVideoAction == "repeat") {
-                            exoPlayer.seekTo(0)
-                            exoPlayer.playWhenReady = true
-                        } else latestOnVideoEnded()
-                    }
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    val decoderFailure: MediaCodecRenderer.DecoderInitializationException? = generateSequence<Throwable>(error) { cause -> cause.cause }
-                        .filterIsInstance<MediaCodecRenderer.DecoderInitializationException>()
-                        .firstOrNull()
-                    val failedVideoMime = decoderFailure?.mimeType?.startsWith("video/") == true
-                    val currentVideoHeight = exoPlayer.videoFormat?.height ?: 0
-                    val availableHeights = exoPlayer.currentTracks.groups
-                        .filter { it.type == C.TRACK_TYPE_VIDEO }
-                        .flatMap { group -> (0 until group.length).filter { group.isTrackSupported(it) }.map { group.getTrackFormat(it).height } }
-                        .filter { it > 0 }.distinct().sortedDescending()
-                    val fallbackHeight = if (currentVideoHeight > 0) {
-                        availableHeights.filter { it < currentVideoHeight }.maxOrNull()
-                    } else {
-                        availableHeights.drop(1).firstOrNull()
-                    }
-                    val currentItem = exoPlayer.currentMediaItem
-                    if (failedVideoMime && !qualityFallbackAttempted && fallbackHeight != null && currentItem != null) {
-                        qualityFallbackAttempted = true
-                        trackSelector.parameters = trackSelector.parameters.buildUpon()
-                            .setPreferredVideoMimeType(null)
-                            .setMaxVideoSize(Int.MAX_VALUE, fallbackHeight)
-                            .build()
-                        val resumeAt = exoPlayer.currentPosition
-                        exoPlayer.setMediaItem(currentItem, resumeAt)
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = true
-                        playbackError = null
-                    } else if (failedVideoMime && !audioOnlyFallbackAttempted && currentItem != null && exoPlayer.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }) {
-                        audioOnlyFallbackAttempted = true
-                        videoUnavailableReason = decoderFailure?.let { failure ->
-                            failure.message?.takeIf(String::isNotBlank)
-                                ?: failure.mimeType?.let { context.getString(R.string.player_video_decoder_reason, it) }
-                        } ?: error.localizedMessage?.takeIf(String::isNotBlank)
-                        trackSelector.parameters = trackSelector.parameters.buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
-                            .setPreferredVideoMimeType(null)
-                            .setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                            .build()
-                        val resumeAt = exoPlayer.currentPosition
-                        exoPlayer.setMediaItem(currentItem, resumeAt)
-                        exoPlayer.prepare()
-                        exoPlayer.playWhenReady = true
-                        playbackError = null
-                    } else {
-                        playbackError = context.getString(R.string.player_playback_error, error.localizedMessage ?: context.getString(R.string.error_request))
-                    }
-                }
-            })
-            val subtitleConfigurations = subtitles.mapNotNull { caption ->
-                val path = caption.fileUrl?.takeIf(String::isNotBlank) ?: caption.captionPath?.takeIf(String::isNotBlank)
-                val captionUrl = path?.let { if (it.startsWith("http://") || it.startsWith("https://")) it else server.trimEnd('/') + if (it.startsWith('/')) it else "/$it" }
-                captionUrl?.let {
-                    val mimeType = when {
-                        it.substringBefore('?').endsWith(".srt", ignoreCase = true) -> MimeTypes.APPLICATION_SUBRIP
-                        else -> MimeTypes.TEXT_VTT
-                    }
-                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(it))
-                        .setMimeType(mimeType)
-                        .setLanguage(caption.language?.id)
-                        .setLabel(caption.language?.label ?: caption.language?.id ?: context.getString(R.string.player_subtitles))
-                        .setSelectionFlags(0)
-                        .build()
-                }
-            }
-            val mediaItem = MediaItem.Builder()
-                .setUri(url)
-                .setSubtitleConfigurations(subtitleConfigurations)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(title)
-                        .setArtist(channelDisplayName ?: channelName)
-                        .build()
+                setAudioAttributes(
+                    AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true
                 )
-                .build()
-            setMediaItem(mediaItem)
-            prepare()
-            if (resumePlayback && !uuid.isNullOrBlank()) {
-                val savedPosition = readWatchProgress(context, uuid)
-                if (savedPosition > 0L) seekTo(savedPosition)
             }
-            playWhenReady = true
+    }
+    LaunchedEffect(player, playerVolume) { player.volume = playerVolume / 100f }
+    val latestUuid by rememberUpdatedState(uuid)
+    val latestAfterVideoAction by rememberUpdatedState(afterVideoAction)
+    val latestWatchedThreshold by rememberUpdatedState(watchedRecommendationThreshold)
+    val onPlaybackEnded by rememberUpdatedState(newValue = {
+        val currentUuid = latestUuid
+        if (!currentUuid.isNullOrBlank() && latestWatchedThreshold != "never" && !thresholdMarked) {
+            markVideoWatched(context, currentUuid)
+            thresholdMarked = true
         }
+        if (!currentUuid.isNullOrBlank()) persistWatchProgress(context, currentUuid, 0L, flushNow = true)
+        if (latestAfterVideoAction == "repeat") {
+            player.seekTo(0)
+            player.playWhenReady = true
+        } else latestOnVideoEnded()
+    })
+    DisposableEffect(player, url, uuid) {
+        val listener = object : Player.Listener {
+            private fun updateScreenAwakeState() {
+                keepScreenAwake = player.playWhenReady && player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = updateScreenAwakeState()
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                updateScreenAwakeState()
+                isBuffering = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
+                if (playbackState == Player.STATE_ENDED) onPlaybackEnded()
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val decoderFailure = generateSequence<Throwable>(error) { cause -> cause.cause }
+                    .filterIsInstance<MediaCodecRenderer.DecoderInitializationException>().firstOrNull()
+                val failedVideoMime = decoderFailure?.mimeType?.startsWith("video/") == true
+                val currentVideoHeight = player.videoFormat?.height ?: 0
+                val availableHeights = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_VIDEO }
+                    .flatMap { group -> (0 until group.length).filter { group.isTrackSupported(it) }.map { group.getTrackFormat(it).height } }
+                    .filter { it > 0 }.distinct().sortedDescending()
+                val fallbackHeight = if (currentVideoHeight > 0) availableHeights.filter { it < currentVideoHeight }.maxOrNull() else availableHeights.drop(1).firstOrNull()
+                val currentItem = player.currentMediaItem
+                if (failedVideoMime && !qualityFallbackAttempted && fallbackHeight != null && currentItem != null) {
+                    qualityFallbackAttempted = true
+                    trackSelector.parameters = trackSelector.parameters.buildUpon().setPreferredVideoMimeType(null)
+                        .setMaxVideoSize(Int.MAX_VALUE, fallbackHeight).build()
+                    val resumeAt = player.currentPosition
+                    player.setMediaItem(currentItem, resumeAt)
+                    player.prepare()
+                    player.playWhenReady = true
+                    playbackError = null
+                } else if (failedVideoMime && !audioOnlyFallbackAttempted && currentItem != null && player.currentTracks.groups.any { it.type == C.TRACK_TYPE_AUDIO }) {
+                    audioOnlyFallbackAttempted = true
+                    videoUnavailableReason = decoderFailure?.let { failure ->
+                        failure.message?.takeIf(String::isNotBlank) ?: failure.mimeType?.let { context.getString(R.string.player_video_decoder_reason, it) }
+                    } ?: error.localizedMessage?.takeIf(String::isNotBlank)
+                    trackSelector.parameters = trackSelector.parameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                        .setPreferredVideoMimeType(null).setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).build()
+                    val resumeAt = player.currentPosition
+                    player.setMediaItem(currentItem, resumeAt)
+                    player.prepare()
+                    player.playWhenReady = true
+                    playbackError = null
+                } else {
+                    playbackError = context.getString(R.string.player_playback_error, error.localizedMessage ?: context.getString(R.string.error_request))
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    LaunchedEffect(player, url, uuid, subtitles, title, channelDisplayName, channelName, resumePlayback) {
+        val subtitleConfigurations = subtitles.mapNotNull { caption ->
+            val path = caption.fileUrl?.takeIf(String::isNotBlank) ?: caption.captionPath?.takeIf(String::isNotBlank)
+            val captionUrl = path?.let { if (it.startsWith("http://") || it.startsWith("https://")) it else server.trimEnd('/') + if (it.startsWith('/')) it else "/$it" }
+            captionUrl?.let {
+                val mimeType = if (it.substringBefore('?').endsWith(".srt", ignoreCase = true)) MimeTypes.APPLICATION_SUBRIP else MimeTypes.TEXT_VTT
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(it)).setMimeType(mimeType)
+                    .setLanguage(caption.language?.id)
+                    .setLabel(caption.language?.label ?: caption.language?.id ?: context.getString(R.string.player_subtitles))
+                    .setSelectionFlags(0).build()
+            }
+        }
+        val mediaItem = MediaItem.Builder().setUri(url).setSubtitleConfigurations(subtitleConfigurations)
+            .setMediaMetadata(MediaMetadata.Builder().setTitle(title).setArtist(channelDisplayName ?: channelName).build()).build()
+        val resumeAt = if (resumePlayback && !uuid.isNullOrBlank()) readWatchProgress(context, uuid) else 0L
+        player.setMediaItem(mediaItem, resumeAt)
+        player.prepare()
+        player.playWhenReady = true
     }
     val sessionIntent = remember(context) {
         Intent(context, PlayerActivity::class.java).apply {
@@ -881,11 +855,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             initialQualityApplied = true
         }
     }
-    DisposableEffect(player, uuid) {
+    DisposableEffect(player) {
         onDispose {
-            if (!uuid.isNullOrBlank() && player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
-                persistWatchProgress(context, uuid, player.currentPosition, flushNow = true)
-                if (!thresholdMarked && isWatchedThresholdMet(watchedRecommendationThreshold, player.currentPosition, player.duration)) markVideoWatched(context, uuid)
+            val currentUuid = latestUuid
+            if (!currentUuid.isNullOrBlank() && player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
+                persistWatchProgress(context, currentUuid, player.currentPosition, flushNow = true)
+                if (!thresholdMarked && isWatchedThresholdMet(watchedRecommendationThreshold, player.currentPosition, player.duration)) markVideoWatched(context, currentUuid)
             }
             player.release()
         }
