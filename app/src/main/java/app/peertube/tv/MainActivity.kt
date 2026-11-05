@@ -1355,7 +1355,6 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val lifecycleOwner = context as? LifecycleOwner
     val focusManager = LocalFocusManager.current
     val menuFocusRequester = remember { FocusRequester() }
-    val instanceCheckFocusRequester = remember { FocusRequester() }
     var menuExpanded by remember { mutableStateOf(false) }
     var settingsOverlay by remember { mutableStateOf(false) }
     var focusedVideoMenu by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
@@ -1437,7 +1436,6 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
     LaunchedEffect(menuExpanded) { if (menuExpanded) menuFocusRequester.requestFocus() }
-    LaunchedEffect(m.tab) { if (m.tab == "instances") runCatching { instanceCheckFocusRequester.requestFocus() } }
     BackHandler {
         if (clearHistoryDialog) clearHistoryDialog = false
         else if (clearHistoryPeriodDialog) clearHistoryPeriodDialog = false
@@ -1752,7 +1750,6 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                     onClick = m::checkCachedServersAvailability,
                                     enabled = !m.isCheckingServerAvailability,
                                     modifier = Modifier
-                                        .focusRequester(instanceCheckFocusRequester)
                                         .scale(if (checkAllFocused) 1.08f else 1f)
                                         .background(if (checkAllFocused) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f) else Color.Transparent, RoundedCornerShape(8.dp))
                                         .onFocusChanged { checkAllFocused = it.isFocused }
@@ -1986,6 +1983,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     model = m,
                     selectedCategory = null,
                     selectedSubpage = null,
+                    requestInitialFocus = !menuExpanded,
                     onSelectCategory = { category ->
                         settingsCategory = category
                         settingsSubpage = null
@@ -2123,6 +2121,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             model = m,
                             selectedCategory = settingsCategory,
                             selectedSubpage = settingsSubpage,
+                            requestInitialFocus = !menuExpanded,
                             onSelectCategory = { category ->
                                 settingsCategory = category
                                 if (category == null) settingsSubpage = null
@@ -2257,6 +2256,7 @@ private fun SettingsDashboard(
     model: HomeModel,
     selectedCategory: String?,
     selectedSubpage: String?,
+    requestInitialFocus: Boolean,
     onSelectCategory: (String?) -> Unit,
     onSelectSubpage: (String?) -> Unit,
     historyPeriodHours: Int,
@@ -2267,8 +2267,8 @@ private fun SettingsDashboard(
     onImportBackup: () -> Unit
 ) {
     val firstSettingsCardFocus = remember { FocusRequester() }
-    LaunchedEffect(selectedCategory) {
-        if (selectedCategory == null) runCatching { firstSettingsCardFocus.requestFocus() }
+    LaunchedEffect(selectedCategory, requestInitialFocus) {
+        if (selectedCategory == null && requestInitialFocus) runCatching { firstSettingsCardFocus.requestFocus() }
     }
     val settingsContext = LocalContext.current
     val playerPrefs = remember(settingsContext) { settingsContext.getSharedPreferences("peertube", 0) }
