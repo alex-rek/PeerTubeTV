@@ -74,17 +74,22 @@ data class StreamingPlaylist(val playlistUrl: String? = null, val files: List<Vi
 data class VideoState(val id: Int? = null, val label: String? = null)
 data class VideoCategory(val id: Int? = null, val label: String? = null)
 
+private val ISO_DATE_REGEX = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$""")
+private val ISO_DATE_FORMATTER = ThreadLocal.withInitial {
+    java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US).apply {
+        isLenient = false
+        timeZone = java.util.TimeZone.getTimeZone("UTC")
+    }
+}
+
 /** Parses PeerTube's RFC 3339 timestamps on Android versions before java.time is available. */
 internal fun parseIsoDateMillis(value: String): Long? {
-    val match = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$""").matchEntire(value.trim()) ?: return null
+    val match = ISO_DATE_REGEX.matchEntire(value.trim()) ?: return null
     val fractionMillis = (match.groupValues[2] + "000").take(3)
     val timezone = match.groupValues[3].let { if (it == "Z") "+0000" else it.replace(":", "") }
     val normalized = "${match.groupValues[1]}.$fractionMillis$timezone"
     return runCatching {
-        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US).apply {
-            isLenient = false
-            timeZone = java.util.TimeZone.getTimeZone("UTC")
-        }.parse(normalized)?.time
+        ISO_DATE_FORMATTER.get()?.parse(normalized)?.time
     }.getOrNull()
 }
 
@@ -201,6 +206,9 @@ object ApiFactory {
     private val peerTubeApis = object : LinkedHashMap<String, PeerTubeApi>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PeerTubeApi>?): Boolean = size > 32
     }
+    private val peerTubeConfigApis = object : LinkedHashMap<String, PeerTubeConfigApi>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, PeerTubeConfigApi>?): Boolean = size > 32
+    }
     @Volatile private var directoryApi: InstanceDirectoryApi? = null
     @Volatile private var sepiaApi: SepiaSearchApi? = null
     @Volatile private var peerSeekApi: PeerSeekApi? = null
@@ -212,6 +220,7 @@ object ApiFactory {
         proxySettings = normalized
         safeHttpClient = buildHttpClient(normalized)
         peerTubeApis.clear()
+        peerTubeConfigApis.clear()
         directoryApi = null
         sepiaApi = null
         peerSeekApi = null
@@ -264,24 +273,10 @@ object ApiFactory {
         } else null
         val builder = OkHttpClient.Builder()
         .dns(object : okhttp3.Dns {
-          override fun lookup(hostname: String): List<java.net.InetAddress> {
-            if (settings.enabled && hostname.equals(settings.host.trim(), true)) return okhttp3.Dns.SYSTEM.lookup(hostname)
-            val addresses = java.net.InetAddress.getAllByName(hostname).toList()
-            require(addresses.isNotEmpty() && addresses.all { address ->
-                !address.isAnyLocalAddress && !address.isLoopbackAddress && !address.isLinkLocalAddress && !address.isSiteLocalAddress && !address.isMulticastAddress &&
-                    !(address is java.net.Inet4Address && run {
-                        val b = address.address.map { it.toInt() and 255 }
-                        b[0] == 0 || b[0] == 10 || b[0] == 127 || b[0] >= 224 || (b[0] == 100 && b[1] in 64..127) ||
-                            (b[0] == 169 && b[1] == 254) || (b[0] == 172 && b[1] in 16..31) || (b[0] == 192 && b[1] == 168) ||
-                            (b[0] == 192 && b[1] == 0 && b[2] in setOf(0, 2)) ||
-                            (b[0] == 198 && (b[1] in 18..19 || b[1] == 51 && b[2] == 100)) ||
-                            (b[0] == 203 && b[1] == 0 && b[2] == 113)
-                    }) && !(address is java.net.Inet6Address && ((address.address[0].toInt() and 0xfe) == 0xfc ||
-                    (address.address[0].toInt() and 255) == 0x20 && (address.address[1].toInt() and 255) == 0x01 &&
-                    (address.address[2].toInt() and 255) == 0x0d && (address.address[3].toInt() and 255) == 0xb8))
-            }) { "Refusing to connect to a non-public address" }
-            return addresses
-          }
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                if (settings.enabled && hostname.equals(settings.host.trim(), true)) return okhttp3.Dns.SYSTEM.lookup(hostname)
+                return SafeNetworkTarget.resolvePublicAddresses(hostname)
+            }
         })
         .followRedirects(false)
         .followSslRedirects(false)
@@ -333,7 +328,11 @@ object ApiFactory {
         return secure?.toASCIIString()
     }
     fun directory(): InstanceDirectoryApi = directoryApi ?: synchronized(this) { directoryApi ?: retrofit("https://instances.joinpeertube.org/").create(InstanceDirectoryApi::class.java).also { directoryApi = it } }
-    fun config(server: String): PeerTubeConfigApi = retrofit(server.trimEnd('/') + "/").create(PeerTubeConfigApi::class.java)
+    @Synchronized
+    fun config(server: String): PeerTubeConfigApi {
+        val baseUrl = server.trimEnd('/') + "/"
+        return peerTubeConfigApis.getOrPut(baseUrl) { retrofit(baseUrl).create(PeerTubeConfigApi::class.java) }
+    }
     fun sepiaSearch(): SepiaSearchApi = sepiaApi ?: synchronized(this) { sepiaApi ?: retrofit("https://sepiasearch.org/").create(SepiaSearchApi::class.java).also { sepiaApi = it } }
     fun peerSeek(): PeerSeekApi = peerSeekApi ?: synchronized(this) { peerSeekApi ?: retrofit("https://peerseek.video/").create(PeerSeekApi::class.java).also { peerSeekApi = it } }
 

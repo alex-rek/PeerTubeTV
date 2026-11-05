@@ -276,14 +276,21 @@ internal fun normalizeDiscoveredServer(server: DiscoveredServer): DiscoveredServ
 
 object SafeNetworkTarget {
     fun isSafeHttpsHost(hostInput: String): Boolean {
-        val host = hostInput.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').substringBefore(':').trimEnd('.').lowercase(Locale.ROOT)
+        var host = hostInput.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trimEnd('.').lowercase(Locale.ROOT)
+        if (host.startsWith('[') && host.contains(']')) host = host.substring(1, host.indexOf(']'))
+        else if (host.count { it == ':' } == 1) host = host.substringBefore(':')
         if (host.isBlank() || host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false
         return runCatching {
-            val addresses = InetAddress.getAllByName(host)
-            addresses.isNotEmpty() && addresses.all(::isPublicAddress)
+            resolvePublicAddresses(host).isNotEmpty()
         }.getOrDefault(false)
     }
-    private fun isPublicAddress(address: InetAddress): Boolean {
+    internal fun resolvePublicAddresses(hostname: String): List<InetAddress> {
+        val addresses = InetAddress.getAllByName(hostname).toList()
+        require(addresses.isNotEmpty() && addresses.all(::isPublicAddress)) { "Refusing to connect to a non-public address" }
+        return addresses
+    }
+
+    internal fun isPublicAddress(address: InetAddress): Boolean {
         if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress || address.isSiteLocalAddress || address.isMulticastAddress) return false
         if (address is Inet4Address) {
             val b = address.address.map { it.toInt() and 255 }
@@ -296,6 +303,14 @@ object SafeNetworkTarget {
         }
         if (address is Inet6Address) {
             val bytes = address.address.map { it.toInt() and 255 }
+            fun embeddedIpv4(start: Int): Boolean = runCatching {
+                isPublicAddress(InetAddress.getByAddress(address.address.copyOfRange(start, start + 4)))
+            }.getOrDefault(false)
+            val ipv4Mapped = bytes.take(10).all { it == 0 } && bytes[10] == 0xff && bytes[11] == 0xff
+            if (ipv4Mapped) return embeddedIpv4(12)
+            val nat64 = bytes[0] == 0x00 && bytes[1] == 0x64 && bytes[2] == 0xff && bytes[3] == 0x9b && bytes.subList(4, 12).all { it == 0 }
+            if (nat64) return embeddedIpv4(12)
+            if (bytes[0] == 0x20 && bytes[1] == 0x02) return embeddedIpv4(2)
             return !((bytes[0] and 0xfe) == 0xfc || (bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8))
         }
         return false
