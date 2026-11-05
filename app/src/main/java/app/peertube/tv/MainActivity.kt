@@ -440,7 +440,7 @@ class HomeModel : ViewModel() {
             host = prefs?.getString("proxyHost", "") ?: "",
             port = prefs?.getInt("proxyPort", 8080) ?: 8080,
             username = prefs?.getString("proxyUsername", "") ?: "",
-            password = prefs?.getString("proxyPassword", "") ?: ""
+            password = prefs?.let { ProxyCredentialStore.readAndMigrate(context.applicationContext, it) } ?: ""
         )
         ApiFactory.configureProxy(networkProxy, context.applicationContext)
         searchSettingsRepository = SearchSettingsRepository(context)
@@ -597,7 +597,8 @@ class HomeModel : ViewModel() {
         ApiFactory.configureProxy(networkProxy, appContext)
         prefs?.edit()?.putBoolean("proxyEnabled", networkProxy.enabled)?.putString("proxyType", networkProxy.type)
             ?.putString("proxyHost", networkProxy.host)?.putInt("proxyPort", networkProxy.port)
-            ?.putString("proxyUsername", networkProxy.username)?.putString("proxyPassword", networkProxy.password)?.apply()
+            ?.putString("proxyUsername", networkProxy.username)?.apply()
+        appContext?.let { app -> prefs?.let { ProxyCredentialStore.write(app, it, networkProxy.password) } }
     }
     fun excludeFromRecommendations(video: Video) {
         if (video.uuid !in excludedRecommendationIds) excludedRecommendationIds.add(video.uuid)
@@ -2202,7 +2203,7 @@ private fun createSettingsBackup(context: android.content.Context): String {
 private fun writeSettingsBackupZip(context: android.content.Context, output: java.io.OutputStream) {
     val values = context.getSharedPreferences("peertube", 0).all
     val json = com.google.gson.JsonObject()
-    values.forEach { (key, value) ->
+    values.filterKeys { !it.startsWith("proxy", ignoreCase = true) }.forEach { (key, value) ->
         val item = com.google.gson.JsonObject()
         val type = when (value) {
             is String -> "string"
@@ -2227,28 +2228,39 @@ private fun writeSettingsBackupZip(context: android.content.Context, output: jav
 private fun restoreSettingsBackup(context: android.content.Context, uri: android.net.Uri) {
     val settingsJson = context.contentResolver.openInputStream(uri)?.use { input ->
         java.util.zip.ZipInputStream(input).use { zip ->
-            var entry = zip.nextEntry
-            while (entry != null && entry.name != "settings.json") entry = zip.nextEntry
-            check(entry != null) { "Backup does not contain settings.json" }
-            zip.readBytes().toString(Charsets.UTF_8)
+            val entry = zip.nextEntry
+            require(entry?.name == "settings.json" && !entry.isDirectory) { "Backup does not contain settings.json" }
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val count = zip.read(buffer)
+                if (count < 0) break
+                total += count
+                require(total <= MAX_BACKUP_SETTINGS_BYTES) { "Backup settings file is too large" }
+                output.write(buffer, 0, count)
+            }
+            require(zip.nextEntry == null) { "Backup contains unexpected files" }
+            output.toString(Charsets.UTF_8.name())
         }
     } ?: error("Backup input could not be opened")
+    require(settingsJson.toByteArray(Charsets.UTF_8).size <= MAX_BACKUP_SETTINGS_BYTES) { "Backup settings file is too large" }
     val json = com.google.gson.JsonParser.parseString(settingsJson).asJsonObject
-    val editor = context.getSharedPreferences("peertube", 0).edit().clear()
-    json.entrySet().forEach { (key, itemElement) ->
-        val item = itemElement.asJsonObject
-        val value = item.get("value")
-        when (item.get("type").asString) {
-            "string" -> editor.putString(key, value.asString)
-            "boolean" -> editor.putBoolean(key, value.asBoolean)
-            "int" -> editor.putInt(key, value.asInt)
-            "long" -> editor.putLong(key, value.asLong)
-            "float" -> editor.putFloat(key, value.asFloat)
-            "string_set" -> editor.putStringSet(key, value.asJsonArray.map { it.asString }.toSet())
+    val validated = SettingsBackupCodec.decode(json)
+    val editor = context.getSharedPreferences("peertube", 0).edit()
+    validated.forEach { (key, value) ->
+        when (value) {
+            is String -> editor.putString(key, value)
+            is Boolean -> editor.putBoolean(key, value)
+            is Int -> editor.putInt(key, value)
+            is Long -> editor.putLong(key, value)
+            is Float -> editor.putFloat(key, value)
         }
     }
     check(editor.commit()) { "Settings backup could not be restored" }
 }
+
+private const val MAX_BACKUP_SETTINGS_BYTES = 512 * 1024
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
