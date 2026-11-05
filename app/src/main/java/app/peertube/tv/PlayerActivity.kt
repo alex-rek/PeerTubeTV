@@ -48,6 +48,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -59,6 +61,10 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecRenderer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.CaptionStyleCompat
+import androidx.media3.session.MediaSession
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import android.net.Uri
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -375,7 +381,15 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(ApiFactory.media3DataSourceFactory())
         ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory)
+            .setHandleAudioBecomingNoisy(true)
             .setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                true
+            )
             volume = playerVolume / 100f
             val exoPlayer = this
             addListener(object : Player.Listener {
@@ -469,7 +483,16 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                         .build()
                 }
             }
-            val mediaItem = MediaItem.Builder().setUri(url).setSubtitleConfigurations(subtitleConfigurations).build()
+            val mediaItem = MediaItem.Builder()
+                .setUri(url)
+                .setSubtitleConfigurations(subtitleConfigurations)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(title)
+                        .setArtist(channelDisplayName ?: channelName)
+                        .build()
+                )
+                .build()
             setMediaItem(mediaItem)
             prepare()
             if (resumePlayback && !uuid.isNullOrBlank()) {
@@ -478,6 +501,43 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             }
             playWhenReady = true
         }
+    }
+    val sessionIntent = remember(context) {
+        Intent(context, PlayerActivity::class.java).apply {
+            (context as? Activity)?.intent?.let { source ->
+                data = source.data
+                source.extras?.let(::putExtras)
+            }
+        }
+    }
+    val sessionActivity = remember(context, sessionIntent) {
+        android.app.PendingIntent.getActivity(
+            context,
+            0,
+            sessionIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+    val mediaSession = remember(player, sessionActivity) {
+        MediaSession.Builder(context, player)
+            .setSessionActivity(sessionActivity)
+            .build()
+    }
+    DisposableEffect(mediaSession) {
+        onDispose { mediaSession.release() }
+    }
+    val lifecycleOwner = context as? LifecycleOwner
+    DisposableEffect(player, lifecycleOwner, uuid) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                if (!uuid.isNullOrBlank() && player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
+                    persistWatchProgress(context, uuid, player.currentPosition)
+                }
+                player.pause()
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
     val playerWindow = (context as? Activity)?.window
     val originallyKeepScreenOn = remember(playerWindow) {
