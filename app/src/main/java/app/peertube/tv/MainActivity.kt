@@ -1633,6 +1633,26 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             }
         }
     }
+    val navigateToSection: (String, Boolean) -> Unit = { key, closeMenu ->
+        if (closeMenu) menuExpanded = false
+        if (key == "settings") {
+            settingsCategory = null
+            settingsSubpage = null
+            settingsOverlay = false
+            m.tab = "settings"
+        } else {
+            settingsOverlay = false
+            m.tab = key
+            when (key) {
+                "popular" -> if (m.popularVideosServer != m.server || m.popularVideos.isEmpty()) m.loadPopular()
+                "home" -> m.load()
+                "instances" -> m.loadInstances()
+                "recommendations" -> m.loadRecommendations()
+                "subscriptions" -> m.loadSubscriptions()
+                "channels" -> m.syncSubscriptions()
+            }
+        }
+    }
     Box(Modifier.fillMaxSize()) BoxScope@{
       Row(
         Modifier.fillMaxSize().onPreviewKeyEvent { event ->
@@ -1688,19 +1708,10 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         "favorites" -> Icons.Filled.Favorite
                         else -> Icons.Filled.Settings
                     }
-                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = Color.White, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = {
-                        menuExpanded = false
-                        if (key == "settings") {
-                            settingsCategory = null
-                            settingsSubpage = null
-                            settingsOverlay = false
-                            m.tab = "settings"
-                        } else {
-                            settingsOverlay = false
-                            m.tab = key
-                            when (key) { "popular" -> if (m.popularVideosServer != m.server || m.popularVideos.isEmpty()) m.loadPopular(); "home" -> m.load(); "instances" -> m.loadInstances(); "recommendations" -> m.loadRecommendations(); "subscriptions" -> m.loadSubscriptions(); "channels" -> m.syncSubscriptions() }
-                        }
-                    }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged { navFocused = it.isFocused }.then(if (key == "home") Modifier.focusRequester(menuFocusRequester) else Modifier))
+                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = Color.White, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
+                        navFocused = it.isFocused
+                        if (it.isFocused) navigateToSection(key, false)
+                    }.then(if (key == "home") Modifier.focusRequester(menuFocusRequester) else Modifier))
                 }
               }
             }
