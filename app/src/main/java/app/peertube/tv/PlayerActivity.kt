@@ -71,19 +71,17 @@ import com.google.gson.reflect.TypeToken
 class PlayerActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val homeScreenLink = intent.data?.takeIf { it.scheme == "peertubetv" && it.host == "video" }
         val url = intent.getStringExtra("url")
         val audioOnly = intent.getBooleanExtra("audioOnly", false)
         val liveStateId = if (intent.hasExtra("liveStateId")) intent.getIntExtra("liveStateId", 0).takeIf { it != 0 } else null
-        val uuid = intent.getStringExtra("uuid") ?: homeScreenLink?.getQueryParameter("uuid")
+        val uuid = intent.getStringExtra("uuid")
         val server = intent.getStringExtra("server")?.takeIf(::isValidPeerTubeServer)
-            ?: homeScreenLink?.getQueryParameter("server")?.takeIf(::isValidPeerTubeServer)
-        val title = intent.getStringExtra("title") ?: homeScreenLink?.getQueryParameter("title") ?: "PeerTube"
-        val views = intent.getLongExtra("views", homeScreenLink?.getQueryParameter("views")?.toLongOrNull() ?: 0L)
-        val publishedAt = intent.getStringExtra("publishedAt") ?: homeScreenLink?.getQueryParameter("publishedAt")
-        val channelName = intent.getStringExtra("channelName") ?: homeScreenLink?.getQueryParameter("channelName")
-        val channelHost = intent.getStringExtra("channelHost") ?: homeScreenLink?.getQueryParameter("channelHost").orEmpty()
-        val channelDisplayName = intent.getStringExtra("channelDisplayName") ?: homeScreenLink?.getQueryParameter("channelDisplayName")
+        val title = intent.getStringExtra("title") ?: "PeerTube"
+        val views = intent.getLongExtra("views", 0L)
+        val publishedAt = intent.getStringExtra("publishedAt")
+        val channelName = intent.getStringExtra("channelName")
+        val channelHost = intent.getStringExtra("channelHost").orEmpty()
+        val channelDisplayName = intent.getStringExtra("channelDisplayName")
         val queueJson = intent.getStringExtra("playbackQueue").orEmpty()
         val queueType = object : TypeToken<List<PlaybackQueueItem>>() {}.type
         val playbackQueue = runCatching { PeerTubeGson.instance.fromJson<List<PlaybackQueueItem>>(queueJson, queueType) ?: emptyList() }.getOrDefault(emptyList())

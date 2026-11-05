@@ -31,7 +31,8 @@
                 <data android:scheme="peertubetv" android:host="home" />
             </intent-filter>
         </activity>
-        <activity android:name=".PlayerActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="true" android:screenOrientation="sensorLandscape">
+        <activity android:name=".PlayerActivity" android:configChanges="orientation|screenSize|keyboardHidden" android:exported="false" android:screenOrientation="sensorLandscape" />
+        <activity android:name=".VideoDeepLinkActivity" android:exported="true" android:screenOrientation="sensorLandscape">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
