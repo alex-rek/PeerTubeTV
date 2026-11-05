@@ -271,6 +271,11 @@ private fun Modifier.remoteCenterPress(onShortPress: () -> Unit, onLongPress: ()
     }
 }
 
+private data class SavedContentSnapshot(
+    val watched: List<String>, val excluded: List<String>, val hidden: Set<String>,
+    val history: List<Video>, val favorites: List<Video>, val subscriptions: List<VideoSubscription>
+)
+
 class HomeModel : ViewModel() {
     private var sepiaSearchJob: Job? = null
     private var sepiaSearchRequestId = 0
@@ -317,7 +322,7 @@ class HomeModel : ViewModel() {
         private set
     var networkProxy by mutableStateOf(NetworkProxySettings())
         private set
-    val watchedVideoIds = mutableStateListOf<String>()
+    val watchedVideoIds = mutableStateMapOf<String, Boolean>()
     val excludedRecommendationIds = mutableStateListOf<String>()
     var exitMode by mutableStateOf("none")
         private set
@@ -427,9 +432,13 @@ class HomeModel : ViewModel() {
     val history = mutableStateListOf<Video>()
     val historyViewedAt = mutableStateMapOf<String, Long>()
     val favorites = mutableStateListOf<Video>()
+    val favoriteIds = mutableStateMapOf<String, Boolean>()
     val subscriptions = mutableStateListOf<VideoSubscription>()
     private var prefs: android.content.SharedPreferences? = null
     private var appContext: android.content.Context? = null
+    private val contentSaveLock = Any()
+    private val contentSaveExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile private var lastQueuedContentSnapshot: SavedContentSnapshot? = null
     fun init(context: android.content.Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences("peertube", 0)
@@ -476,7 +485,7 @@ class HomeModel : ViewModel() {
         recommendationBasis = prefs?.getString("recommendationBasis", "history")?.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         recommendationLanguage = prefs?.getString("recommendationLanguage", "country")?.takeIf { it == "country" || it in Locale.getISOLanguages() } ?: "country"
         watchedVideoIds.clear()
-        runCatching { watchedVideoIds.addAll(PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
+        runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type).orEmpty().forEach { watchedVideoIds[it] = true } }
         excludedRecommendationIds.clear()
         runCatching { excludedRecommendationIds.addAll(PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("excludedRecommendationIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList()) }
         val savedExitMode = prefs?.getString("exitMode", null)
@@ -573,13 +582,58 @@ class HomeModel : ViewModel() {
         runCatching { historyViewedAt.putAll(PeerTubeGson.instance.fromJson<Map<String, Long>>(prefs?.getString("historyViewedAt", "{}"), historyTimeType) ?: emptyMap()) }
         history.forEach { if (it.uuid !in historyViewedAt) historyViewedAt[it.uuid] = System.currentTimeMillis() }
         runCatching { favorites.addAll(PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), type) ?: emptyList()) }
+        favorites.forEach { favoriteIds[it.uuid] = true }
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
         runCatching {
             subscriptions.addAll(PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
                 .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
         }
     }
-    fun save() { prefs?.edit()?.putString("server", server)?.putBoolean("gridMode", gridMode)?.putString("afterVideoAction", afterVideoAction)?.putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds)?.putBoolean("showPlayerClock", showPlayerClock)?.putString("playerClockPosition", playerClockPosition)?.putString("playerClockSize", playerClockSize)?.putString("playerClockBackdrop", playerClockBackdrop)?.putBoolean("resumePlayback", resumePlayback)?.putString("watchedRecommendationThreshold", watchedRecommendationThreshold)?.putString("recommendationBasis", recommendationBasis)?.putString("recommendationLanguage", recommendationLanguage)?.putString("watchedVideoIds", PeerTubeGson.instance.toJson(watchedVideoIds.toList()))?.putString("excludedRecommendationIds", PeerTubeGson.instance.toJson(excludedRecommendationIds.toList()))?.putBoolean("peerSeekEnabled", peerSeekEnabled)?.putString("videoSortMode", videoSortMode)?.putBoolean("navigationSounds", navigationSounds)?.putString("exitMode", exitMode)?.putInt("videoTitleLines", videoTitleLines)?.putFloat("tickerSpeed", tickerSpeed)?.putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds)?.putInt("seekStepSeconds", seekStepSeconds)?.putString("launchTab", launchTab)?.putString("hiddenSections", PeerTubeGson.instance.toJson(hiddenSections))?.putString("selectedTheme", selectedTheme)?.putBoolean("showSearchIcon", showSearchIcon)?.putFloat("uiScale", uiScale)?.putFloat("gridScale", gridScale)?.putBoolean("clock24Hour", clock24Hour)?.putString("searchCountryCode", searchCountryCode)?.putString("serverSortMode", serverSortMode)?.putString("bufferProfile", bufferProfile)?.putInt("playerVolume", playerVolume)?.putString("history", PeerTubeGson.instance.toJson(history))?.putString("favorites", PeerTubeGson.instance.toJson(favorites))?.putString("subscriptions", PeerTubeGson.instance.toJson(subscriptions))?.apply() }
+    fun save() {
+        val preferences = prefs ?: return
+        preferences.edit().putString("server", server).putBoolean("gridMode", gridMode).putString("afterVideoAction", afterVideoAction)
+            .putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds).putBoolean("showPlayerClock", showPlayerClock)
+            .putString("playerClockPosition", playerClockPosition).putString("playerClockSize", playerClockSize).putString("playerClockBackdrop", playerClockBackdrop)
+            .putBoolean("resumePlayback", resumePlayback).putString("watchedRecommendationThreshold", watchedRecommendationThreshold)
+            .putString("recommendationBasis", recommendationBasis).putString("recommendationLanguage", recommendationLanguage)
+            .putBoolean("peerSeekEnabled", peerSeekEnabled).putString("videoSortMode", videoSortMode).putBoolean("navigationSounds", navigationSounds)
+            .putString("exitMode", exitMode).putInt("videoTitleLines", videoTitleLines).putFloat("tickerSpeed", tickerSpeed)
+            .putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds).putInt("seekStepSeconds", seekStepSeconds).putString("launchTab", launchTab)
+            .putString("selectedTheme", selectedTheme).putBoolean("showSearchIcon", showSearchIcon).putFloat("uiScale", uiScale).putFloat("gridScale", gridScale)
+            .putBoolean("clock24Hour", clock24Hour).putString("searchCountryCode", searchCountryCode).putString("serverSortMode", serverSortMode)
+            .putString("bufferProfile", bufferProfile).putInt("playerVolume", playerVolume).apply()
+
+        val content = SavedContentSnapshot(
+            watchedVideoIds.keys.toList().takeLast(1_000), excludedRecommendationIds.toList().takeLast(5_000), hiddenSections.toSet(),
+            history.toList().take(100), favorites.toList().takeLast(1_000), subscriptions.toList().takeLast(1_000)
+        )
+        synchronized(contentSaveLock) {
+            if (content == lastQueuedContentSnapshot) return
+            lastQueuedContentSnapshot = content
+            contentSaveExecutor.execute {
+                val values = mapOf(
+                    "watchedVideoIds" to PeerTubeGson.instance.toJson(content.watched),
+                    "excludedRecommendationIds" to PeerTubeGson.instance.toJson(content.excluded),
+                    "hiddenSections" to PeerTubeGson.instance.toJson(content.hidden),
+                    "history" to PeerTubeGson.instance.toJson(content.history.map(Video::compactForStorage)),
+                    "favorites" to PeerTubeGson.instance.toJson(content.favorites.map(Video::compactForStorage)),
+                    "subscriptions" to PeerTubeGson.instance.toJson(content.subscriptions)
+                )
+                synchronized(contentSaveLock) {
+                    if (content != lastQueuedContentSnapshot) return@execute
+                    val editor = preferences.edit()
+                    var changed = false
+                    values.forEach { (key, value) ->
+                        if (preferences.getString(key, null) != value) {
+                            editor.putString(key, value)
+                            changed = true
+                        }
+                    }
+                    if (changed) editor.apply()
+                }
+            }
+        }
+    }
     fun updateRecommendationBasis(basis: String) {
         recommendationBasis = basis.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         save()
@@ -606,7 +660,8 @@ class HomeModel : ViewModel() {
         save()
     }
     fun markRecommendationWatched(video: Video) {
-        if (video.uuid !in watchedVideoIds) watchedVideoIds.add(video.uuid)
+        if (video.uuid !in watchedVideoIds) watchedVideoIds[video.uuid] = true
+        appContext?.let { PlaybackStateStore.addWatched(it, video.uuid) }
         if (video.uuid !in excludedRecommendationIds) excludedRecommendationIds.add(video.uuid)
         history.removeAll { it.uuid == video.uuid }
         history.add(0, video)
@@ -823,13 +878,10 @@ class HomeModel : ViewModel() {
         else -> darkColorScheme(primary = Color(0xFFF36C21), secondary = Color(0xFFFFA05E), background = Color(0xFF0B0F14), surface = Color(0xFF171A21), surfaceVariant = Color(0xFF27231F))
     }
     fun syncWatchProgress() {
-        val type = object : TypeToken<Map<String, Long>>() {}.type
-        val stored = runCatching { PeerTubeGson.instance.fromJson<Map<String, Long>>(prefs?.getString("watchProgressMs", "{}"), type) ?: emptyMap() }.getOrDefault(emptyMap())
         watchProgressMs.clear()
-        watchProgressMs.putAll(stored)
-        val savedWatched = runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("watchedVideoIds", "[]"), object : TypeToken<List<String>>() {}.type) ?: emptyList() }.getOrDefault(emptyList())
+        watchProgressMs.putAll(appContext?.let { PlaybackStateStore.progressSnapshot(it) }.orEmpty())
         watchedVideoIds.clear()
-        watchedVideoIds.addAll(savedWatched)
+        appContext?.let { PlaybackStateStore.watchedSnapshot(it) }.orEmpty().forEach { watchedVideoIds[it] = true }
         if (watchedRecommendationThreshold != "never") recommendations = recommendations.filterNot { it.uuid in watchedVideoIds }
     }
     fun watchProgressFraction(video: Video): Float {
@@ -868,6 +920,8 @@ class HomeModel : ViewModel() {
         val stored = runCatching { PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), videoType) ?: emptyList() }.getOrDefault(emptyList())
         favorites.clear()
         favorites.addAll(stored)
+        favoriteIds.clear()
+        stored.forEach { favoriteIds[it.uuid] = true }
     }
     fun toggleSubscription(video: Video) {
         val channel = video.channel
@@ -1575,7 +1629,13 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             .putExtra("watchedRecommendationThreshold", m.watchedRecommendationThreshold))
     }
     val toggleFavorite: (Video) -> Unit = { video ->
-        if (m.favorites.any { it.uuid == video.uuid }) m.favorites.removeAll { it.uuid == video.uuid } else m.favorites.add(video)
+        if (video.uuid in m.favoriteIds) {
+            m.favorites.removeAll { it.uuid == video.uuid }
+            m.favoriteIds.remove(video.uuid)
+        } else {
+            m.favorites.add(video)
+            m.favoriteIds[video.uuid] = true
+        }
         m.save()
     }
     val openChannelVideos: (Video) -> Unit = { video ->
@@ -1969,12 +2029,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
@@ -2011,7 +2071,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 downFocusRequester = latestShelfFirstCardFocus,
                                 titleLines = m.videoTitleLines,
                                 onOpen = { video -> openVideoInQueue(video, m.recommendations) },
-                                isFavorite = { video -> m.favorites.any { it.uuid == video.uuid } },
+                                isFavorite = { video -> video.uuid in m.favoriteIds },
                                 isSubscribed = m::isSubscribed,
                                 onFavorite = toggleFavorite,
                                 onSubscription = m::toggleSubscription,
@@ -2033,7 +2093,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 firstCardFocusRequester = latestShelfFirstCardFocus,
                                 titleLines = m.videoTitleLines,
                             onOpen = { video -> openVideoInQueue(video, m.sortVideos(m.videos)) },
-                            isFavorite = { video -> m.favorites.any { it.uuid == video.uuid } },
+                            isFavorite = { video -> video.uuid in m.favoriteIds },
                             isSubscribed = m::isSubscribed,
                             onFavorite = toggleFavorite,
                             onSubscription = m::toggleSubscription,
@@ -2080,22 +2140,22 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
                         if (m.liveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_now_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.liveVideos, key = { "live-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                            items(m.liveVideos, key = { "live-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
                         }
                         if (m.recentlyEndedLiveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_recent_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.recentlyEndedLiveVideos, key = { "ended-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                            items(m.recentlyEndedLiveVideos, key = { "ended-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
                         }
                     }
                 } else if (m.tab == "popular" && rows.isEmpty()) {
                     // Loading, empty-state, or error are rendered with the section heading above.
                 } else if (m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        items(rows, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), m.favorites.any { it.uuid == video.uuid }, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        items(rows, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
                     }
                 }
             }

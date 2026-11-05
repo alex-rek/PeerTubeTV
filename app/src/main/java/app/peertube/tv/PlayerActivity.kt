@@ -408,7 +408,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                             markVideoWatched(context, uuid)
                             thresholdMarked = true
                         }
-                        if (!uuid.isNullOrBlank()) persistWatchProgress(context, uuid, 0L)
+                        if (!uuid.isNullOrBlank()) persistWatchProgress(context, uuid, 0L, flushNow = true)
                         if (afterVideoAction == "repeat") {
                             exoPlayer.seekTo(0)
                             exoPlayer.playWhenReady = true
@@ -528,7 +528,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 if (!uuid.isNullOrBlank() && player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
-                    persistWatchProgress(context, uuid, player.currentPosition)
+                    persistWatchProgress(context, uuid, player.currentPosition, flushNow = true)
                 }
                 player.pause()
             }
@@ -555,7 +555,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     LaunchedEffect(player, uuid) {
         if (!uuid.isNullOrBlank()) {
             while (true) {
-                kotlinx.coroutines.delay(5_000)
+                kotlinx.coroutines.delay(30_000)
                 if (player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
                     persistWatchProgress(context, uuid, player.currentPosition)
                     if (!thresholdMarked && isWatchedThresholdMet(watchedRecommendationThreshold, player.currentPosition, player.duration)) {
@@ -602,7 +602,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         val current = readFavoriteVideos(context).toMutableList()
         if (current.any { it.uuid == favoriteVideo.uuid }) current.removeAll { it.uuid == favoriteVideo.uuid }
         else current.add(favoriteVideo)
-        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("favorites", PeerTubeGson.instance.toJson(current)).apply()
+        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("favorites", PeerTubeGson.instance.toJson(current.map(Video::compactForStorage))).apply()
         isFavorite = current.any { it.uuid == favoriteVideo.uuid }
     }
     fun toggleSubscription() {
@@ -884,7 +884,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     DisposableEffect(player, uuid) {
         onDispose {
             if (!uuid.isNullOrBlank() && player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
-                persistWatchProgress(context, uuid, player.currentPosition)
+                persistWatchProgress(context, uuid, player.currentPosition, flushNow = true)
                 if (!thresholdMarked && isWatchedThresholdMet(watchedRecommendationThreshold, player.currentPosition, player.duration)) markVideoWatched(context, uuid)
             }
             player.release()
@@ -1445,14 +1445,8 @@ private class RemotePlayerView(context: Context) : PlayerView(context) {
     Text(time, modifier = modifier.background(backgroundColor).padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, fontSize = fontSize)
 }
 
-private fun persistWatchProgress(context: android.content.Context, uuid: String, positionMs: Long) {
-    val prefs = context.getSharedPreferences("peertube", 0)
-    val type = object : TypeToken<MutableMap<String, Long>>() {}.type
-    val positions = runCatching {
-        PeerTubeGson.instance.fromJson<MutableMap<String, Long>>(prefs.getString("watchProgressMs", "{}"), type)?.toMutableMap() ?: mutableMapOf()
-    }.getOrDefault(mutableMapOf())
-    positions[uuid] = positionMs.coerceAtLeast(0L)
-    prefs.edit().putString("watchProgressMs", PeerTubeGson.instance.toJson(positions)).apply()
+private fun persistWatchProgress(context: android.content.Context, uuid: String, positionMs: Long, flushNow: Boolean = false) {
+    PlaybackStateStore.updateProgress(context, uuid, positionMs, flushNow)
 }
 
 private fun isWatchedThresholdMet(threshold: String, positionMs: Long, durationMs: Long): Boolean {
@@ -1467,23 +1461,11 @@ private fun isWatchedThresholdMet(threshold: String, positionMs: Long, durationM
 }
 
 private fun markVideoWatched(context: android.content.Context, uuid: String) {
-    val prefs = context.getSharedPreferences("peertube", 0)
-    val type = object : TypeToken<MutableList<String>>() {}.type
-    val watched = runCatching {
-        PeerTubeGson.instance.fromJson<MutableList<String>>(prefs.getString("watchedVideoIds", "[]"), type)?.toMutableList() ?: mutableListOf()
-    }.getOrDefault(mutableListOf())
-    if (uuid !in watched) {
-        watched.add(uuid)
-        prefs.edit().putString("watchedVideoIds", PeerTubeGson.instance.toJson(watched)).apply()
-    }
+    PlaybackStateStore.addWatched(context, uuid)
 }
 
 private fun readWatchProgress(context: android.content.Context, uuid: String): Long {
-    val type = object : TypeToken<Map<String, Long>>() {}.type
-    val positions = runCatching {
-        PeerTubeGson.instance.fromJson<Map<String, Long>>(context.getSharedPreferences("peertube", 0).getString("watchProgressMs", "{}"), type) ?: emptyMap()
-    }.getOrDefault(emptyMap())
-    return positions[uuid]?.coerceAtLeast(0L) ?: 0L
+    return PlaybackStateStore.progress(context, uuid)
 }
 
 
