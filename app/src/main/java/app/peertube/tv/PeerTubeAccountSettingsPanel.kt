@@ -133,7 +133,8 @@ private fun accountMessage(context: android.content.Context, error: Throwable): 
     "invalid_credentials" -> R.string.account_error_credentials
     "two_factor" -> R.string.account_error_two_factor
     "session_expired" -> R.string.account_error_session
-    "storage_error" -> R.string.account_error_storage
+    "storage_read_error", "storage_key_missing", "storage_key_mismatch" -> R.string.account_storage_error
+    "storage_write_error" -> R.string.account_error_storage
     "rate_limited" -> R.string.account_error_rate
     "forbidden" -> R.string.account_error_forbidden
     "redirect" -> R.string.account_error_redirect

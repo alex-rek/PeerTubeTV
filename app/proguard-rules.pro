@@ -23,6 +23,10 @@
 -keep class app.peertube.tv.PeerSeekPage { *; }
 -keep class app.peertube.tv.PeerSeekVideo { *; }
 -keep class app.peertube.tv.DiscoveredServer { *; }
+-keep class app.peertube.tv.AccountOAuthClient { *; }
+-keep class app.peertube.tv.AccountProfile { *; }
+-keep class app.peertube.tv.AccountSession { *; }
+-keep class app.peertube.tv.StoredPeerTubeAccounts { *; }
 
 -keepattributes Signature,*Annotation*
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement

@@ -3,9 +3,11 @@ package app.peertube.tv
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.util.Log
 import android.util.AtomicFile
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -30,16 +32,34 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import java.security.KeyStore
 
-internal class AccountAuthFailure(val reason: String, val status: Int = 0) : java.io.IOException(reason)
-internal data class AccountOAuthClient(val id: String, val secret: String) { override fun toString() = "AccountOAuthClient(redacted)" }
+internal class AccountAuthFailure(val reason: String, val status: Int = 0, cause: Throwable? = null) : java.io.IOException(reason, cause)
+internal data class AccountOAuthClient(
+    @field:SerializedName(value = "id", alternate = ["a"]) val id: String,
+    @field:SerializedName(value = "secret", alternate = ["b"]) val secret: String
+) { override fun toString() = "AccountOAuthClient(redacted)" }
 internal data class AccountOAuthTokens(val access: String, val refresh: String, val expiresIn: Long) { override fun toString() = "AccountOAuthTokens(redacted)" }
-internal data class AccountProfile(val userId: Long, val username: String, val displayName: String, val avatar: String?)
-internal data class AccountSession(val server: String, val client: AccountOAuthClient, val access: String, val refresh: String,
-    val expiresAt: Long, val profile: AccountProfile, val needsLogin: Boolean = false) {
+internal data class AccountProfile(
+    @field:SerializedName(value = "userId", alternate = ["a"]) val userId: Long,
+    @field:SerializedName(value = "username", alternate = ["b"]) val username: String,
+    @field:SerializedName(value = "displayName", alternate = ["c"]) val displayName: String,
+    @field:SerializedName(value = "avatar", alternate = ["d"]) val avatar: String?
+)
+internal data class AccountSession(
+    @field:SerializedName(value = "server", alternate = ["a"]) val server: String,
+    @field:SerializedName(value = "client", alternate = ["b"]) val client: AccountOAuthClient,
+    @field:SerializedName(value = "access", alternate = ["c"]) val access: String,
+    @field:SerializedName(value = "refresh", alternate = ["d"]) val refresh: String,
+    @field:SerializedName(value = "expiresAt", alternate = ["e"]) val expiresAt: Long,
+    @field:SerializedName(value = "profile", alternate = ["f"]) val profile: AccountProfile,
+    @field:SerializedName(value = "needsLogin", alternate = ["g"]) val needsLogin: Boolean = false
+) {
     val id get() = "$server|${profile.userId}"
     override fun toString() = "AccountSession(server=$server, credentials=redacted)"
 }
-internal data class StoredPeerTubeAccounts(val sessions: List<AccountSession> = emptyList(), val activeId: String? = null)
+internal data class StoredPeerTubeAccounts(
+    @field:SerializedName(value = "sessions", alternate = ["a"]) val sessions: List<AccountSession> = emptyList(),
+    @field:SerializedName(value = "activeId", alternate = ["b"]) val activeId: String? = null
+)
 internal data class PeerTubeAccountSummary(val id: String, val server: String, val username: String, val displayName: String, val avatar: String?, val needsLogin: Boolean)
 internal data class PeerTubeAccountsState(val ready: Boolean = false, val accounts: List<PeerTubeAccountSummary> = emptyList(), val activeId: String? = null, val storageError: Boolean = false) {
     val active get() = accounts.firstOrNull { it.id == activeId }
@@ -176,31 +196,36 @@ private class PeerTubeAccountTransport(private val client: () -> OkHttpClient) {
 private class EncryptedPeerTubeAccountStore(context: Context) {
     private val file = AtomicFile(File(context.noBackupFilesDir, "peertube-account-sessions.bin"))
     private val gson = Gson()
-    private fun key(): SecretKey {
+    private fun hasStoreFile() = file.baseFile.exists() || File(file.baseFile.path + ".bak").exists() || File(file.baseFile.path + ".new").exists()
+    private fun key(createIfMissing: Boolean): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("peertubetv.account.v1", null) as? SecretKey)?.let { return it }
+        if (!createIfMissing) throw AccountAuthFailure("storage_key_missing")
         return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
             init(KeyGenParameterSpec.Builder("peertubetv.account.v1", KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setRandomizedEncryptionRequired(true).build())
         }.generateKey()
     }
     suspend fun load(): StoredPeerTubeAccounts = withContext(Dispatchers.IO) {
-        val secret = key()
+        if (!hasStoreFile()) return@withContext StoredPeerTubeAccounts()
+        val secret = key(createIfMissing = false)
         val input = try { file.openRead() } catch (error: java.io.FileNotFoundException) {
-            if (file.baseFile.exists() || File(file.baseFile.path + ".bak").exists() || File(file.baseFile.path + ".new").exists()) throw error
+            if (hasStoreFile()) throw error
             return@withContext StoredPeerTubeAccounts()
         }
         val bytes = input.use { it.readBytes().also { require(it.size in 29..1_048_576) } }
         require(bytes[0] == 1.toByte())
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, secret, GCMParameterSpec(128, bytes.copyOfRange(1, 13)))
-        val plain = cipher.doFinal(bytes, 13, bytes.size - 13)
+        val plain = try { cipher.doFinal(bytes, 13, bytes.size - 13) } catch (error: javax.crypto.AEADBadTagException) {
+            throw AccountAuthFailure("storage_key_mismatch", cause = error)
+        }
         try { gson.fromJson(plain.toString(Charsets.UTF_8), StoredPeerTubeAccounts::class.java) ?: throw AccountAuthFailure("storage_error") }
         finally { plain.fill(0) }
     }
     suspend fun save(data: StoredPeerTubeAccounts) = withContext(Dispatchers.IO) {
         val plain = gson.toJson(data).toByteArray(Charsets.UTF_8)
-        val encrypted = try { val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key()); byteArrayOf(1) + cipher.iv + cipher.doFinal(plain) } finally { plain.fill(0) }
+        val encrypted = try { val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key(createIfMissing = true)); byteArrayOf(1) + cipher.iv + cipher.doFinal(plain) } finally { plain.fill(0) }
         val stream = file.startWrite()
         try { stream.write(encrypted); file.finishWrite(stream) } catch (error: Exception) { file.failWrite(stream); throw error }
     }
@@ -228,11 +253,18 @@ internal class PeerTubeAccountManager(context: Context) {
             saved = data.copy(activeId = data.activeId?.takeIf { id -> data.sessions.any { it.id == id } } ?: data.sessions.firstOrNull()?.id)
             loaded = true; publish()
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (error: Exception) { publish(true); throw if (error is AccountAuthFailure) error else AccountAuthFailure("storage_error") }
+        catch (error: Exception) {
+            Log.e("PeerTubeAccountStore", "Encrypted account store read failed (${error.javaClass.name})", error)
+            publish(true)
+            throw if (error is AccountAuthFailure) error else AccountAuthFailure("storage_read_error", cause = error)
+        }
     }
     suspend fun initialize() = mutex.withLock { initializeLocked() }
     private suspend fun commit(next: StoredPeerTubeAccounts) {
-        withContext(NonCancellable) { try { store.save(next) } catch (_: Exception) { throw AccountAuthFailure("storage_error") }; saved = next; publish() }
+        withContext(NonCancellable) { try { store.save(next) } catch (error: Exception) {
+            Log.e("PeerTubeAccountStore", "Encrypted account store write failed (${error.javaClass.name})", error)
+            throw AccountAuthFailure("storage_write_error", cause = error)
+        }; saved = next; publish() }
     }
     private fun expiry(tokens: AccountOAuthTokens): Long {
         if (tokens.access.isBlank() || tokens.refresh.isBlank() || tokens.expiresIn !in 1..31_536_000) throw AccountAuthFailure("invalid_response")

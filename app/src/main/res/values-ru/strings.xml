@@ -138,7 +138,7 @@
     <string name="account_saved">Сохранённый аккаунт</string>
     <string name="account_expired">Требуется повторный вход</string>
     <string name="account_security_note">Пароль не сохраняется. Токены сессии зашифрованы Android Keystore. Вход выполняется по HTTPS на выбранный сервер PeerTube.</string>
-    <string name="account_storage_error">Не удалось прочитать зашифрованное хранилище аккаунтов.</string>
+    <string name="account_storage_error">Не удалось расшифровать сохранённый вход. Очистите повреждённое хранилище и войдите снова.</string>
     <string name="account_reset">Удалить сохранённые входы</string>
     <string name="account_error_server">Укажите корректный адрес сервера PeerTube с HTTPS.</string>
     <string name="account_error_not_peertube">Сервер не вернул ответ OAuth PeerTube.</string>

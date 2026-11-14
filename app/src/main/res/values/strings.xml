@@ -138,7 +138,7 @@
     <string name="account_saved">Saved account</string>
     <string name="account_expired">Sign-in required</string>
     <string name="account_security_note">Passwords are not saved. Session tokens are encrypted with Android Keystore. Account sign-in uses HTTPS on the selected PeerTube server.</string>
-    <string name="account_storage_error">Could not read the encrypted account store.</string>
+    <string name="account_storage_error">The saved sign-in could not be decrypted. Clear the damaged store and sign in again.</string>
     <string name="account_reset">Clear saved sign-ins</string>
     <string name="account_error_server">Enter a valid HTTPS PeerTube server address.</string>
     <string name="account_error_not_peertube">This server did not return a PeerTube OAuth response.</string>
