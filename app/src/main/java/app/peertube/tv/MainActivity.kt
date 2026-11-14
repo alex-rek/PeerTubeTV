@@ -46,6 +46,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
@@ -1389,6 +1390,9 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
 @OptIn(ExperimentalFoundationApi::class)
 @Composable private fun HomeContent(m: HomeModel) {
     val context = LocalContext.current
+    val accountManager = remember(context) { PeerTubeAccounts.get(context) }
+    val accountState by accountManager.state.collectAsState()
+    LaunchedEffect(accountManager) { runCatching { accountManager.initialize() } }
     val navigationTone = remember { android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 35) }
     var lastNavigationToneAt by remember { mutableLongStateOf(0L) }
     DisposableEffect(navigationTone) { onDispose { navigationTone.release() } }
@@ -1748,7 +1752,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(0.dp)
             ) {
-              Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+              Column(Modifier.fillMaxSize().focusGroup().verticalScroll(rememberScrollState())) {
                 Spacer(Modifier.height(64.dp))
                 listOf("home" to R.string.nav_home, "popular" to R.string.nav_popular, "recommendations" to R.string.nav_recommendations, "live" to R.string.nav_live, "subscriptions" to R.string.nav_subscriptions, "channels" to R.string.nav_channels, "instances" to R.string.nav_instances, "history" to R.string.nav_history, "favorites" to R.string.nav_favorites, "settings" to R.string.nav_settings).filter { (key, _) -> key == "home" || key == "settings" || key !in m.hiddenSections }.forEach { (key, label) ->
                     val isSelected = if (key == "settings") (m.tab == "settings" || settingsOverlay) else m.tab == key
@@ -1774,12 +1778,20 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
               }
             }
         }
-        Column(Modifier.weight(1f).padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
+        Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
                 if (m.showSearchIcon) {
                 IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).background(MaterialTheme.colorScheme.primary, CircleShape)) {
                     SearchGlyph()
                 }
+                }
+                if (accountState.active != null) {
+                    val activeAccount = accountState.active!!
+                    IconButton(onClick = { settingsCategory = "accounts"; settingsSubpage = null; settingsOverlay = true }, modifier = Modifier.size(44.dp).padding(start = 4.dp)) {
+                        if (!activeAccount.avatar.isNullOrBlank()) AsyncImage(activeAccount.avatar, contentDescription = activeAccount.displayName,
+                            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentScale = ContentScale.Crop)
+                        else Icon(Icons.Filled.AccountCircle, contentDescription = activeAccount.displayName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxSize())
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 Column(horizontalAlignment = Alignment.End) { LocalDateTime(m.clock24Hour) }
@@ -2375,6 +2387,7 @@ private fun SettingsDashboard(
     }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
     val categories = listOf(
+        "accounts" to R.string.settings_accounts,
         "language" to R.string.settings_language_country,
         "general" to R.string.settings_general,
         "interface" to R.string.settings_interface,
@@ -2415,6 +2428,7 @@ private fun SettingsDashboard(
                     ) {
                         Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
                             when (key) {
+                                "accounts" -> Icon(Icons.Filled.AccountCircle, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "language" -> Icon(Icons.Filled.Public, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "general" -> Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "interface" -> Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(54.dp))
@@ -2546,6 +2560,12 @@ private fun SettingsDashboard(
                     } else {
                     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         when (selectedCategory) {
+                            "accounts" -> PeerTubeAccountSettingsPanel(model = model) { server ->
+                                model.server = server
+                                model.save()
+                                model.load()
+                                model.loadSubscriptions()
+                            }
                             "language" -> {
                                 val langLabel = if (model.uiLanguage == "auto") stringResource(R.string.language_auto) else {
                                     val locale = Locale.forLanguageTag(model.uiLanguage)

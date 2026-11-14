@@ -215,6 +215,12 @@ object ApiFactory {
     @Volatile private var sepiaApi: SepiaSearchApi? = null
     @Volatile private var peerSeekApi: PeerSeekApi? = null
 
+    /** Auth requests share the app's proxy, DNS validation and TLS policy. */
+    @Synchronized
+    internal fun authHttpClient(): OkHttpClient = safeHttpClient.newBuilder()
+        .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+        .callTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
+
     @Synchronized
     fun configureProxy(settings: NetworkProxySettings, context: android.content.Context? = null) {
         val normalized = settings.copy(type = settings.type.takeIf { it in setOf("http", "socks5") } ?: "http", port = settings.port.coerceIn(1, 65535))
