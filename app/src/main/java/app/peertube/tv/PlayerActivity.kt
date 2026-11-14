@@ -342,6 +342,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var isSubscribed by remember(channelName, channelHost, server) {
         mutableStateOf(readSavedSubscriptions(context).any { "${it.name}@${it.host}".equals("${channelName.orEmpty()}@$subscriptionHost", ignoreCase = true) })
     }
+    LaunchedEffect(channelName, subscriptionHost) {
+        val account = PeerTubeAccounts.get(context).state.value.active?.takeUnless { it.needsLogin }
+        val name = channelName?.takeIf(String::isNotBlank) ?: return@LaunchedEffect
+        if (account != null) runCatching { PeerTubeAccounts.get(context).hasSubscription(account.id, "$name@$subscriptionHost") }
+            .onSuccess { isSubscribed = it }
+    }
     val controlActions = buildList {
         addAll(0..4)
         add(5)
@@ -528,10 +534,25 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     }
     LaunchedEffect(player, uuid) {
         if (!uuid.isNullOrBlank()) {
+            val accounts = PeerTubeAccounts.get(context)
+            runCatching { accounts.initialize() }
+            val trackingSessionId = java.util.UUID.randomUUID().toString()
+            var lastLocalSaveAt = android.os.SystemClock.elapsedRealtime()
             while (true) {
-                kotlinx.coroutines.delay(30_000)
+                kotlinx.coroutines.delay(7_000)
                 if (player.duration > 0 && player.playbackState != Player.STATE_ENDED) {
-                    persistWatchProgress(context, uuid, player.currentPosition)
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastLocalSaveAt >= 30_000L) {
+                        persistWatchProgress(context, uuid, player.currentPosition)
+                        lastLocalSaveAt = now
+                    }
+                    if (player.isPlaying) {
+                        accounts.state.value.active?.takeIf { !it.needsLogin }?.let { account ->
+                            runCatching {
+                                accounts.notifyWatching(account.id, server, uuid, (player.currentPosition / 1_000L).toInt(), trackingSessionId)
+                            }
+                        }
+                    }
                     if (!thresholdMarked && isWatchedThresholdMet(watchedRecommendationThreshold, player.currentPosition, player.duration)) {
                         markVideoWatched(context, uuid)
                         thresholdMarked = true
@@ -582,6 +603,17 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     fun toggleSubscription() {
         val name = channelName?.takeIf(String::isNotBlank) ?: return
         val host = subscriptionHost
+        val accountManager = PeerTubeAccounts.get(context)
+        val account = accountManager.state.value.active?.takeUnless { it.needsLogin }
+        if (account != null) {
+            val wanted = !isSubscribed
+            isSubscribed = wanted
+            panelScope.launch {
+                runCatching { accountManager.setSubscription(account.id, "$name@$host", wanted) }
+                    .onFailure { isSubscribed = !wanted }
+            }
+            return
+        }
         val current = readSavedSubscriptions(context).toMutableList()
         val existing = current.firstOrNull { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
         if (existing != null) current.remove(existing)

@@ -290,6 +290,7 @@ class HomeModel : ViewModel() {
     var liveVideos by mutableStateOf<List<Video>>(emptyList())
     var recentlyEndedLiveVideos by mutableStateOf<List<Video>>(emptyList())
     var isLoadingLive by mutableStateOf(false)
+    private var liveLoadRequestId = 0
     var isSearching by mutableStateOf(false)
     var recommendations by mutableStateOf<List<Video>>(emptyList())
     var subscriptionVideos by mutableStateOf<List<Video>>(emptyList())
@@ -435,6 +436,14 @@ class HomeModel : ViewModel() {
     val favorites = mutableStateListOf<Video>()
     val favoriteIds = mutableStateMapOf<String, Boolean>()
     val subscriptions = mutableStateListOf<VideoSubscription>()
+    private val localSubscriptions = mutableStateListOf<VideoSubscription>()
+    val localChannelSubscriptions: List<VideoSubscription> get() = localSubscriptions.toList()
+    private val serverHistoryUuids = linkedSetOf<String>()
+    var isLoadingHistory by mutableStateOf(false)
+    private var activeAccountId: String? = null
+    fun hasActiveAccount(): Boolean = activeAccountId != null
+    private var accountObserverJob: Job? = null
+    var isLoadingSubscriptions by mutableStateOf(false)
     private var prefs: android.content.SharedPreferences? = null
     private var appContext: android.content.Context? = null
     private val contentSaveLock = Any()
@@ -466,6 +475,7 @@ class HomeModel : ViewModel() {
         history.clear()
         favorites.clear()
         subscriptions.clear()
+        localSubscriptions.clear()
         historyViewedAt.clear()
         server = prefs?.getString("server", server) ?: server
         gridMode = prefs?.getBoolean("gridMode", true) ?: true
@@ -586,8 +596,24 @@ class HomeModel : ViewModel() {
         favorites.forEach { favoriteIds[it.uuid] = true }
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
         runCatching {
-            subscriptions.addAll(PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
+            localSubscriptions.addAll(PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
                 .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
+        }
+        subscriptions.clear(); subscriptions.addAll(localSubscriptions)
+        accountObserverJob?.cancel()
+        accountObserverJob = viewModelScope.launch {
+            val accounts = PeerTubeAccounts.get(context.applicationContext)
+            runCatching { accounts.initialize() }
+            accounts.state.collect { state ->
+                val next = state.active?.takeUnless { it.needsLogin }?.id
+                if (state.ready && next != activeAccountId) {
+                    activeAccountId = next
+                    if (next == null) {
+                        subscriptions.clear(); subscriptions.addAll(localSubscriptions)
+                        loadSubscriptions()
+                    } else { loadSubscriptions(); loadHistory() }
+                }
+            }
         }
     }
     fun save() {
@@ -606,7 +632,7 @@ class HomeModel : ViewModel() {
 
         val content = SavedContentSnapshot(
             watchedVideoIds.keys.toList().takeLast(1_000), excludedRecommendationIds.toList().takeLast(5_000), hiddenSections.toSet(),
-            history.toList().take(100), favorites.toList().takeLast(1_000), subscriptions.toList().takeLast(1_000)
+            history.toList().take(100), favorites.toList().takeLast(1_000), localSubscriptions.toList().takeLast(1_000)
         )
         synchronized(contentSaveLock) {
             if (content == lastQueuedContentSnapshot) return
@@ -890,11 +916,56 @@ class HomeModel : ViewModel() {
         return ((watchProgressMs[video.uuid] ?: 0L).toFloat() / (video.duration * 1000f)).coerceIn(0f, 1f)
     }
     fun clearHistory() {
+        val accountId = activeAccountId
+        val remoteIds = serverHistoryUuids.toList()
         history.clear()
         historyViewedAt.clear()
+        serverHistoryUuids.clear()
         recommendations = emptyList()
         save()
         prefs?.edit()?.putString("historyViewedAt", "{}")?.apply()
+        val context = appContext
+        if (accountId != null && context != null) viewModelScope.launch {
+            remoteIds.forEach { uuid -> runCatching { PeerTubeAccounts.get(context).deleteHistory(accountId, uuid) }
+                .onFailure { error = it.localizedMessage ?: "Could not clear server history" } }
+        }
+    }
+    fun loadHistory() {
+        val accountId = activeAccountId ?: return
+        val context = appContext ?: return
+        if (isLoadingHistory) return
+        viewModelScope.launch {
+            isLoadingHistory = true
+            try {
+                val accounts = PeerTubeAccounts.get(context)
+                val active = accounts.state.value.active?.takeIf { it.id == accountId } ?: return@launch
+                val remote = mutableListOf<Video>()
+                val remoteIds = linkedSetOf<String>()
+                var start = 0
+                while (start < 1_000) {
+                    val page = accounts.history(accountId, start)
+                    val rows = page.getAsJsonArray("data")?.mapNotNull { item -> runCatching {
+                        val video = PeerTubeGson.instance.fromJson(item, Video::class.java)
+                        if (video.uuid.isBlank()) null else video.copy(
+                            host = video.host ?: video.channel?.host ?: video.account?.host ?: video.url?.let { runCatching { URI(it).host }.getOrNull() } ?: URI(active.server).authority,
+                            thumbnailUrl = video.thumbnailUrl ?: video.thumbnailPath?.let { URI(active.server + "/").resolve(it).toString() }
+                        )
+                    }.getOrNull() }.orEmpty()
+                    remote += rows
+                    remoteIds += rows.map { it.uuid }
+                    start += rows.size
+                    val total = runCatching { page.get("total")?.asInt }.getOrNull() ?: start
+                    if (rows.isEmpty() || start >= total) break
+                }
+                serverHistoryUuids.clear(); serverHistoryUuids.addAll(remoteIds)
+                val localOnly = history.filterNot { it.uuid in remoteIds }
+                history.clear()
+                history.addAll((remote + localOnly).distinctBy { it.uuid }.take(100))
+                save()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (failure: Exception) { error = failure.localizedMessage ?: "Could not sync server history" }
+            finally { isLoadingHistory = false }
+        }
     }
     fun markVideoViewed(uuid: String) {
         historyViewedAt[uuid] = System.currentTimeMillis()
@@ -913,8 +984,9 @@ class HomeModel : ViewModel() {
         val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
         val stored = runCatching { PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
             .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) } }.getOrDefault(emptyList())
-        subscriptions.clear()
-        subscriptions.addAll(stored)
+        localSubscriptions.clear()
+        localSubscriptions.addAll(stored)
+        if (activeAccountId == null) { subscriptions.clear(); subscriptions.addAll(stored) }
     }
     fun syncFavorites() {
         val videoType = object : TypeToken<List<Video>>() {}.type
@@ -924,15 +996,36 @@ class HomeModel : ViewModel() {
         favoriteIds.clear()
         stored.forEach { favoriteIds[it.uuid] = true }
     }
+    private fun changeSubscription(channel: VideoSubscription, subscribed: Boolean) {
+        val current = subscriptions.firstOrNull { "${it.name}@${it.host}".equals("${channel.name}@${channel.host}", ignoreCase = true) }
+        if ((current != null) == subscribed) return
+        if (subscribed) subscriptions.add(channel) else current?.let(subscriptions::remove)
+        val accountId = activeAccountId
+        if (accountId == null) {
+            val local = localSubscriptions.firstOrNull { "${it.name}@${it.host}".equals("${channel.name}@${channel.host}", ignoreCase = true) }
+            if (subscribed && local == null) localSubscriptions.add(channel)
+            if (!subscribed) local?.let(localSubscriptions::remove)
+            save()
+            return
+        }
+        val context = appContext ?: return
+        viewModelScope.launch {
+            runCatching { PeerTubeAccounts.get(context).setSubscription(accountId, "${channel.name}@${channel.host}", subscribed) }
+                .onFailure { error = message(R.string.error_subscriptions, it.localizedMessage ?: "Subscription update failed") }
+        }
+    }
+    fun removeSubscription(channel: VideoSubscription) = changeSubscription(channel, false)
+    fun removeLocalSubscription(channel: VideoSubscription) {
+        localSubscriptions.removeAll { "${it.name}@${it.host}".equals("${channel.name}@${channel.host}", ignoreCase = true) }
+        if (activeAccountId == null) { subscriptions.clear(); subscriptions.addAll(localSubscriptions) }
+        save()
+    }
     fun toggleSubscription(video: Video) {
         val channel = video.channel
         val name = channel?.name?.takeIf(String::isNotBlank) ?: video.account?.name?.takeIf(String::isNotBlank) ?: return
         val host = channel?.host?.takeIf(String::isNotBlank) ?: video.account?.host?.takeIf(String::isNotBlank) ?: video.host?.takeIf(String::isNotBlank) ?: video.sourceServer(server).removePrefix("https://").removePrefix("http://")
-        val identity = "$name@$host".lowercase()
-        val existing = subscriptions.firstOrNull { "${it.name}@${it.host}".lowercase() == identity }
-        if (existing != null) subscriptions.remove(existing)
-        else subscriptions.add(VideoSubscription(name, host, channel?.displayName ?: video.account?.displayName ?: name))
-        save()
+        val existing = subscriptions.any { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
+        changeSubscription(VideoSubscription(name, host, channel?.displayName ?: video.account?.displayName ?: name), !existing)
     }
     fun isSubscribed(video: Video): Boolean {
         val name = video.channel?.name ?: video.account?.name ?: return false
@@ -941,6 +1034,48 @@ class HomeModel : ViewModel() {
     }
     fun loadSubscriptions() {
         viewModelScope.launch {
+            val context = appContext
+            val accountId = activeAccountId
+            if (accountId != null && context != null) {
+                isLoadingSubscriptions = true
+                subscriptions.clear()
+                error = null
+                try {
+                    val accounts = PeerTubeAccounts.get(context)
+                    val active = accounts.state.value.active?.takeIf { it.id == accountId } ?: throw AccountAuthFailure("session_expired")
+                    val channels = mutableListOf<VideoSubscription>()
+                    var start = 0
+                    while (start < 2_000) {
+                        val page = accounts.subscriptions(accountId, start)
+                        val rows = page.getAsJsonArray("data")?.mapNotNull { element -> runCatching {
+                            val obj = element.asJsonObject
+                            val rawName = obj.get("name")?.asString.orEmpty().trim()
+                            val name = rawName.substringBeforeLast('@', rawName)
+                            val host = obj.get("host")?.asString?.takeIf(String::isNotBlank)
+                                ?: rawName.substringAfterLast('@', "").takeIf(String::isNotBlank)
+                                ?: java.net.URI(active.server).authority
+                            if (name.isBlank()) null else VideoSubscription(name, host, obj.get("displayName")?.asString?.takeIf(String::isNotBlank) ?: name)
+                        }.getOrNull() }.orEmpty()
+                        channels += rows
+                        start += rows.size
+                        val total = runCatching { page.get("total")?.asInt }.getOrNull() ?: start
+                        if (rows.isEmpty() || start >= total) break
+                    }
+                    subscriptions.clear(); subscriptions.addAll(channels.distinctBy { "${it.name}@${it.host}".lowercase() })
+                    val feedPage = accounts.subscriptionVideos(accountId, 0)
+                    val type = object : TypeToken<VideoPage>() {}.type
+                    val feed = PeerTubeGson.instance.fromJson<VideoPage>(feedPage, type).data.map { video -> video.copy(
+                        host = video.host ?: video.channel?.host ?: video.account?.host ?: java.net.URI(active.server).authority,
+                        thumbnailUrl = video.thumbnailUrl ?: video.thumbnailPath?.let { java.net.URI(active.server + "/").resolve(it).toString() }
+                    ) }
+                    subscriptionVideos = feed.distinctBy { it.uuid }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    error = message(R.string.error_subscriptions, failure.localizedMessage ?: "Request failed")
+                    subscriptionVideos = emptyList()
+                } finally { isLoadingSubscriptions = false }
+                return@launch
+            }
             if (subscriptions.isEmpty()) { subscriptionVideos = emptyList(); error = null; return@launch }
             error = null
             val semaphore = kotlinx.coroutines.sync.Semaphore(4)
@@ -1033,6 +1168,7 @@ class HomeModel : ViewModel() {
         }
     }
     fun loadLive() {
+        val requestId = ++liveLoadRequestId
         viewModelScope.launch {
             isLoadingLive = true
             try {
@@ -1047,45 +1183,39 @@ class HomeModel : ViewModel() {
                     sort = "-publishedAt",
                     isLive = true
                 ).data.distinctBy { it.uuid }
-                // Sepia's isLive filter also includes live-video entries that are waiting to start
-                // or have ended. Resolve entries without a playable URL from their origin server.
-                liveVideos = results.chunked(8).flatMap { batch ->
-                    batch.map { candidate -> async {
-                        if (candidate.state?.id in listOf(4, 5) || candidate.playableUrl() != null) return@async candidate
+                // Render the live results as soon as the index responds. Per-video detail calls
+                // here used to serialize with hundreds of recent-video/session checks before the
+                // screen could show anything.
+                if (requestId == liveLoadRequestId) liveVideos = results
+                viewModelScope.launch {
+                    val nowMillis = System.currentTimeMillis()
+                    val cutoffMillis = nowMillis - 24 * 60 * 60 * 1000L
+                    // Recently ended replays are supplemental; keep this bounded and off the
+                    // critical path so slow origins cannot delay the live list.
+                    val candidates = runCatching {
+                        searchApi.videos(search = null, start = 0, count = 60, sort = "-publishedAt", isLive = false).data
+                    }.getOrDefault(emptyList()).distinctBy { it.uuid }.filter { video ->
+                        val published = video.publishedAt?.let(::parseIsoDateMillis)
+                        published != null && published >= cutoffMillis && published <= nowMillis
+                    }.take(20)
+                    val ended = candidates.chunked(8).flatMap { batch -> batch.map { video -> async {
                         runCatching {
-                            ApiFactory.create(candidate.sourceServer(server)).video(candidate.uuid)
-                        }.getOrNull() ?: candidate
-                    } }.awaitAll().filterNotNull()
-                }.distinctBy { it.uuid }
-                val nowMillis = System.currentTimeMillis()
-                val cutoffMillis = nowMillis - 24 * 60 * 60 * 1000L
-                // Browse recent non-live videos too: archived streams no longer match isLive=true.
-                val recentPages = (0..2).map { page -> async {
-                    runCatching {
-                        searchApi.videos(search = null, start = page * 100, count = 100, sort = "-publishedAt", isLive = false).data
-                    }.getOrDefault(emptyList())
-                } }.awaitAll()
-                val recentCandidates = recentPages.flatten().distinctBy { it.uuid }.filter { video ->
-                    val published = video.publishedAt?.let(::parseIsoDateMillis)
-                    published != null && published >= cutoffMillis && published <= nowMillis
-                }.take(60)
-                recentlyEndedLiveVideos = recentCandidates.chunked(6).flatMap { batch ->
-                    batch.map { video -> async {
-                        runCatching {
-                            val origin = ApiFactory.create(video.sourceServer(server))
-                            val endedAt = origin.liveSession(video.uuid).endDate?.let(::parseIsoDateMillis)
+                            val endedAt = ApiFactory.create(video.sourceServer(server)).liveSession(video.uuid).endDate?.let(::parseIsoDateMillis)
                             if (endedAt != null && endedAt >= cutoffMillis && endedAt <= nowMillis) video else null
                         }.getOrNull()
-                    } }.awaitAll().filterNotNull()
-                }.distinctBy { it.uuid }
-                val endedIds = recentlyEndedLiveVideos.mapTo(hashSetOf()) { it.uuid }
-                liveVideos = results.filterNot { it.uuid in endedIds }
+                    } }.awaitAll().filterNotNull() }.distinctBy { it.uuid }
+                    if (requestId == liveLoadRequestId) {
+                        recentlyEndedLiveVideos = ended
+                        val endedIds = ended.mapTo(hashSetOf()) { it.uuid }
+                        liveVideos = results.filterNot { it.uuid in endedIds }
+                    }
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 error = message(R.string.error_live, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
-                isLoadingLive = false
+                if (requestId == liveLoadRequestId) isLoadingLive = false
             }
         }
     }
@@ -1367,9 +1497,9 @@ class HomeModel : ViewModel() {
 data class VideoSubscription(val name: String, val host: String, val displayName: String)
 
 internal fun normalizeVideoSubscription(subscription: VideoSubscription): VideoSubscription? {
-    val name = subscription.name?.trim()?.takeIf(String::isNotBlank) ?: return null
+    val name = subscription.name?.trim()?.takeIf { it.matches(Regex("[A-Za-z0-9_.:-]{1,200}")) } ?: return null
     val host = subscription.host?.trim()?.removePrefix("https://")?.removePrefix("http://")
-        ?.substringBefore('/')?.trimEnd('.')?.takeIf { it.matches(Regex("(?i)[a-z0-9.-]{1,253}")) } ?: return null
+        ?.substringBefore('/')?.trimEnd('.')?.takeIf { runCatching { accountServerOrigin("https://$it"); true }.getOrDefault(false) } ?: return null
     return subscription.copy(name = name, host = host, displayName = subscription.displayName?.takeIf(String::isNotBlank) ?: name)
 }
 
@@ -1488,6 +1618,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 m.syncWatchProgress()
                 m.syncFavorites()
                 m.syncSubscriptions()
+                if (m.tab == "history") m.loadHistory()
             }
         }
         lifecycleOwner?.lifecycle?.addObserver(observer)
@@ -1543,6 +1674,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         }
     }
     LaunchedEffect(m.tab) {
+        if (m.tab == "history") m.loadHistory()
         if (m.tab == "live") {
             m.loadLive()
             while (true) {
@@ -1924,11 +2056,14 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 }
             } else if (m.tab == "channels") {
                 Text(stringResource(R.string.channels_title), style = MaterialTheme.typography.headlineSmall)
-                if (m.subscriptions.isEmpty()) {
+                val localChannels = m.localChannelSubscriptions
+                val accountChannels = if (m.hasActiveAccount()) m.subscriptions.toList() else emptyList()
+                if (localChannels.isEmpty() && accountChannels.isEmpty()) {
                     Text(stringResource(R.string.channels_empty), modifier = Modifier.padding(16.dp))
                 } else {
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                        item {
+                        if (accountChannels.isNotEmpty() || m.hasActiveAccount()) item {
+                            Text(stringResource(R.string.channels_server_section), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
                             Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(stringResource(R.string.channel_name_header), Modifier.weight(0.40f), style = MaterialTheme.typography.titleSmall)
                                 Text(stringResource(R.string.channel_server_header), Modifier.weight(0.34f), style = MaterialTheme.typography.titleSmall)
@@ -1936,7 +2071,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             }
                             HorizontalDivider()
                         }
-                        items(m.subscriptions.toList(), key = { "${it.name}@${it.host}" }) { channel ->
+                        items(accountChannels, key = { "server:${it.name}@${it.host}" }) { channel ->
                             Column {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(
@@ -1957,7 +2092,34 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                         maxLines = 2,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
-                                    TextButton(onClick = { m.subscriptions.remove(channel); m.save() }, modifier = Modifier.weight(0.26f)) { Text(stringResource(R.string.unsubscribe), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                                    TextButton(onClick = { m.removeSubscription(channel) }, modifier = Modifier.weight(0.26f)) { Text(stringResource(R.string.unsubscribe), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                        item {
+                            Text(stringResource(R.string.channels_local_section), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+                            if (localChannels.isNotEmpty()) {
+                                Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.channel_name_header), Modifier.weight(0.40f), style = MaterialTheme.typography.titleSmall)
+                                    Text(stringResource(R.string.channel_server_header), Modifier.weight(0.34f), style = MaterialTheme.typography.titleSmall)
+                                    Text(stringResource(R.string.channel_action_header), Modifier.weight(0.26f), style = MaterialTheme.typography.titleSmall)
+                                }
+                                HorizontalDivider()
+                            } else Text(stringResource(R.string.channels_local_empty), modifier = Modifier.padding(vertical = 8.dp))
+                        }
+                        items(localChannels, key = { "local:${it.name}@${it.host}" }) { channel ->
+                            Column {
+                                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(channel.displayName, Modifier.weight(0.40f).clickable { m.loadChannelVideos(channel.name, channel.host) },
+                                        style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary,
+                                        textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline, maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    Text(channel.host.ifBlank { stringResource(R.string.server_unknown) }, Modifier.weight(0.34f), style = MaterialTheme.typography.bodyMedium, maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    TextButton(onClick = { m.removeLocalSubscription(channel) }, modifier = Modifier.weight(0.26f)) {
+                                        Text(stringResource(R.string.unsubscribe), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                    }
                                 }
                                 HorizontalDivider()
                             }
@@ -2121,7 +2283,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 if (m.tab == "subscriptions") {
                     Text(stringResource(R.string.nav_subscriptions), style = MaterialTheme.typography.headlineSmall)
                     Text(stringResource(R.string.subscriptions_help), style = MaterialTheme.typography.bodyMedium)
-                    if (m.subscriptions.isEmpty()) Text(stringResource(R.string.subscriptions_empty), modifier = Modifier.padding(16.dp))
+                    if (m.isLoadingSubscriptions) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                    else if (m.subscriptions.isEmpty()) Text(stringResource(R.string.subscriptions_empty), modifier = Modifier.padding(16.dp))
                     else if (m.subscriptionVideos.isEmpty() && m.error == null) Text(stringResource(R.string.subscriptions_no_videos), modifier = Modifier.padding(16.dp))
                 } else if (m.tab == "channel") {
                     Text(m.activeChannelTitle, style = MaterialTheme.typography.headlineSmall)
@@ -2138,6 +2301,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         else -> R.string.nav_home
                     }
                     Text(stringResource(sectionTitle), style = MaterialTheme.typography.headlineSmall)
+                    if (m.tab == "history" && m.isLoadingHistory) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                     if (m.tab == "popular" && m.isLoadingPopular) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
                     else if (m.tab == "popular" && m.popularVideos.isEmpty() && m.error == null) Text(stringResource(R.string.subscriptions_no_videos), modifier = Modifier.padding(16.dp))
                     if (m.tab == "recommendations") {

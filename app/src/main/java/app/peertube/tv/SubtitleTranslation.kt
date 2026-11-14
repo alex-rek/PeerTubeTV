@@ -57,23 +57,36 @@ fun downloadableSubtitleTranslationLanguages(): List<Pair<String, String>> = tra
 }
 
 fun refreshDownloadedTranslationLanguages(onResult: (Result<Set<String>>) -> Unit) {
-    RemoteModelManager.getInstance().getDownloadedModels(TranslateRemoteModel::class.java)
-        .addOnSuccessListener { models -> onResult(Result.success(models.map { it.language }.toSet())) }
-        .addOnFailureListener { onResult(Result.failure(it)) }
+    try {
+        RemoteModelManager.getInstance().getDownloadedModels(TranslateRemoteModel::class.java)
+            .addOnSuccessListener { models -> onResult(Result.success(models.map { it.language }.toSet())) }
+            .addOnFailureListener { onResult(Result.failure(it)) }
+    } catch (error: Exception) {
+        // Some Android TV builds can throw synchronously inside ML Kit before a Task is returned.
+        onResult(Result.failure(error))
+    }
 }
 
 fun downloadTranslationLanguage(language: String, onResult: (Result<Unit>) -> Unit) {
-    val model = TranslateRemoteModel.Builder(language).build()
-    RemoteModelManager.getInstance().download(model, DownloadConditions.Builder().build())
-        .addOnSuccessListener { onResult(Result.success(Unit)) }
-        .addOnFailureListener { onResult(Result.failure(it)) }
+    try {
+        val model = TranslateRemoteModel.Builder(language).build()
+        RemoteModelManager.getInstance().download(model, DownloadConditions.Builder().build())
+            .addOnSuccessListener { onResult(Result.success(Unit)) }
+            .addOnFailureListener { onResult(Result.failure(it)) }
+    } catch (error: Exception) {
+        onResult(Result.failure(error))
+    }
 }
 
 fun deleteTranslationLanguage(language: String, onResult: (Result<Unit>) -> Unit) {
-    val model = TranslateRemoteModel.Builder(language).build()
-    RemoteModelManager.getInstance().deleteDownloadedModel(model)
-        .addOnSuccessListener { onResult(Result.success(Unit)) }
-        .addOnFailureListener { onResult(Result.failure(it)) }
+    try {
+        val model = TranslateRemoteModel.Builder(language).build()
+        RemoteModelManager.getInstance().deleteDownloadedModel(model)
+            .addOnSuccessListener { onResult(Result.success(Unit)) }
+            .addOnFailureListener { onResult(Result.failure(it)) }
+    } catch (error: Exception) {
+        onResult(Result.failure(error))
+    }
 }
 
 fun interfaceSubtitleLanguage(uiLanguage: String): String {
@@ -135,9 +148,15 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
         return@withContext it
     }
 
-    val languageIdentifier = LanguageIdentification.getClient(
-        LanguageIdentificationOptions.Builder().setConfidenceThreshold(0.5f).build()
-    )
+    val languageIdentifier = try {
+        LanguageIdentification.getClient(
+            LanguageIdentificationOptions.Builder().setConfidenceThreshold(0.5f).build()
+        )
+    } catch (_: Exception) {
+        // If Play Services/ML Kit is unavailable, keep the original metadata instead of
+        // letting the translation coroutine crash the app.
+        return@withContext text
+    }
     val sourceCode = runCatching { Tasks.await(languageIdentifier.identifyLanguage(sourceText.take(1_000))) }.getOrNull()
     if (sourceCode.isNullOrBlank() || sourceCode == "und") return@withContext text
     val source = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(sourceCode)
@@ -146,9 +165,13 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
     val destination = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(target)
         ?: return@withContext text
 
-    val translator = Translation.getClient(
-        TranslatorOptions.Builder().setSourceLanguage(source).setTargetLanguage(destination).build()
-    )
+    val translator = try {
+        Translation.getClient(
+            TranslatorOptions.Builder().setSourceLanguage(source).setTargetLanguage(destination).build()
+        )
+    } catch (_: Exception) {
+        return@withContext text
+    }
     val translated = try {
         ensureTranslationModelsAvailable(translator, source, destination)
         translateMetadataInChunks(translator, sourceText)

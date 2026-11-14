@@ -18,6 +18,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
 import java.net.URI
 import java.util.Locale
@@ -49,6 +51,14 @@ internal fun accountServerOrigin(input: String): String {
     if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.userInfo != null || uri.rawQuery != null || uri.rawFragment != null ||
         uri.path.orEmpty() !in listOf("", "/") || uri.port !in -1..65535 || uri.port == 0) throw AccountAuthFailure("invalid_server")
     return "https://${uri.host.lowercase(Locale.ROOT)}${if (uri.port > 0 && uri.port != 443) ":${uri.port}" else ""}"
+}
+
+internal fun validSubscriptionHandle(value: String): String {
+    val name = value.substringBeforeLast('@', "")
+    val host = value.substringAfterLast('@', "")
+    if (!name.matches(Regex("[A-Za-z0-9_.:-]{1,200}")) || host.isBlank()) throw AccountAuthFailure("invalid_channel")
+    val origin = accountServerOrigin("https://$host")
+    return "$name@${URI(origin).authority}"
 }
 
 private class PeerTubeAccountTransport(private val client: () -> OkHttpClient) {
@@ -112,6 +122,53 @@ private class PeerTubeAccountTransport(private val client: () -> OkHttpClient) {
             URI(accountServerOrigin(server) + "/").resolve(value).takeIf { it.scheme == "https" && it.userInfo == null && it.host != null }?.toString()
         }.getOrNull() }
         return AccountProfile(id, username, display, safeAvatar)
+    }
+    suspend fun subscriptions(server: String, token: String, start: Int): JsonObject =
+        execute(request(server, "/api/v1/users/me/subscriptions?start=${start.coerceAtLeast(0)}&count=100", token).build())
+    suspend fun history(server: String, token: String, start: Int): JsonObject =
+        execute(request(server, "/api/v1/users/me/history/videos?start=${start.coerceAtLeast(0)}&count=100", token).build())
+    suspend fun notifyWatching(server: String, token: String, uuid: String, currentTimeSeconds: Int, sessionId: String) {
+        if (!uuid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) throw AccountAuthFailure("invalid_response")
+        val body = JsonObject().apply {
+            addProperty("currentTime", currentTimeSeconds.coerceAtLeast(0))
+            addProperty("sessionId", sessionId)
+            addProperty("client", "PeerTubeTV")
+            addProperty("device", "smarttv")
+            addProperty("operatingSystem", "Android")
+        }
+        val request = request(server, "/api/v1/videos/${android.net.Uri.encode(uuid)}/views", token)
+            .header("Content-Type", "application/json")
+            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        execute(request, empty = true)
+    }
+    suspend fun deleteHistory(server: String, token: String, uuid: String) {
+        if (!uuid.matches(Regex("[A-Za-z0-9_-]{1,128}"))) throw AccountAuthFailure("invalid_response")
+        execute(request(server, "/api/v1/users/me/history/videos/${android.net.Uri.encode(uuid)}", token).delete().build(), empty = true)
+    }
+    suspend fun hasSubscription(server: String, token: String, handle: String): Boolean {
+        val validHandle = validSubscriptionHandle(handle)
+        return try {
+            execute(request(server, "/api/v1/users/me/subscriptions/${android.net.Uri.encode(validHandle)}", token).build())
+            true
+        } catch (failure: AccountAuthFailure) {
+            if (failure.status == 404) false else throw failure
+        }
+    }
+    suspend fun subscriptionVideos(server: String, token: String, start: Int): JsonObject =
+        execute(request(server, "/api/v1/users/me/subscriptions/videos?start=${start.coerceAtLeast(0)}&count=30&sort=-publishedAt", token).build())
+    suspend fun setSubscription(server: String, token: String, handle: String, subscribed: Boolean) {
+        val validHandle = validSubscriptionHandle(handle)
+        val request = if (subscribed) {
+            val body = com.google.gson.JsonObject().apply { addProperty("uri", validHandle) }
+            Request.Builder().url(accountServerOrigin(server) + "/api/v1/users/me/subscriptions")
+                .header("Accept", "application/json").header("Content-Type", "application/json")
+                .header("Authorization", "Bearer $token")
+                .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        } else {
+            Request.Builder().url(accountServerOrigin(server) + "/api/v1/users/me/subscriptions/${android.net.Uri.encode(validHandle)}")
+                .header("Accept", "application/json").header("Authorization", "Bearer $token").delete().build()
+        }
+        execute(request, empty = true)
     }
     suspend fun revoke(server: String, token: String) { execute(request(server, "/api/v1/users/revoke-token", token).post(FormBody.Builder().build()).build(), true) }
 }
@@ -212,6 +269,29 @@ internal class PeerTubeAccountManager(context: Context) {
         if (profile.userId != session.profile.userId) throw AccountAuthFailure("invalid_response")
         commit(saved.copy(sessions = saved.sessions.map { if (it.id == id) session.copy(profile = profile) else it }))
         state.value.accounts.first { it.id == id }
+    }
+    private suspend fun <T> withAccountToken(id: String, action: suspend (AccountSession) -> T): T = mutex.withLock {
+        initializeLocked()
+        var session = saved.sessions.firstOrNull { it.id == id && !it.needsLogin } ?: throw AccountAuthFailure("session_expired")
+        if (session.expiresAt <= System.currentTimeMillis() + 60_000) session = refresh(session)
+        try { action(session) } catch (failure: AccountAuthFailure) {
+            if (failure.status != 401) throw failure
+            session = refresh(session)
+            action(session)
+        }
+    }
+    suspend fun subscriptions(id: String, start: Int): JsonObject = withAccountToken(id) { api.subscriptions(it.server, it.access, start) }
+    suspend fun history(id: String, start: Int): JsonObject = withAccountToken(id) { api.history(it.server, it.access, start) }
+    suspend fun notifyWatching(id: String, videoServer: String, uuid: String, currentTimeSeconds: Int, sessionId: String) = withAccountToken(id) { session ->
+        if (runCatching { accountServerOrigin(videoServer) }.getOrNull() == session.server) {
+            api.notifyWatching(session.server, session.access, uuid, currentTimeSeconds, sessionId)
+        }
+    }
+    suspend fun deleteHistory(id: String, uuid: String) = withAccountToken(id) { api.deleteHistory(it.server, it.access, uuid) }
+    suspend fun hasSubscription(id: String, handle: String): Boolean = withAccountToken(id) { api.hasSubscription(it.server, it.access, handle) }
+    suspend fun subscriptionVideos(id: String, start: Int): JsonObject = withAccountToken(id) { api.subscriptionVideos(it.server, it.access, start) }
+    suspend fun setSubscription(id: String, handle: String, subscribed: Boolean) = withAccountToken(id) {
+        api.setSubscription(it.server, it.access, handle, subscribed); Unit
     }
     private suspend fun refresh(session: AccountSession): AccountSession {
         val tokens = try { api.refresh(session.server, session.client, session.refresh) } catch (error: AccountAuthFailure) {
