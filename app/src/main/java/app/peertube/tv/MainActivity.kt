@@ -1548,6 +1548,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val homeFirstCardFocusRequester = remember { FocusRequester() }
     val firstSearchResultFocusRequester = remember { FocusRequester() }
     var searchResultFocusPending by remember { mutableStateOf(false) }
+    var returnSearchFocusPending by remember { mutableStateOf(false) }
     var searchButtonFocused by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var settingsOverlay by remember { mutableStateOf(false) }
@@ -1631,13 +1632,20 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
     LaunchedEffect(menuExpanded) { if (menuExpanded) menuFocusRequester.requestFocus() }
+    LaunchedEffect(menuExpanded, returnSearchFocusPending, m.showSearchIcon) {
+        if (!menuExpanded && returnSearchFocusPending) {
+            kotlinx.coroutines.delay(50)
+            if (m.showSearchIcon) runCatching { searchButtonFocusRequester.requestFocus() }
+            returnSearchFocusPending = false
+        }
+    }
     BackHandler {
         if (clearHistoryDialog) clearHistoryDialog = false
         else if (clearHistoryPeriodDialog) clearHistoryPeriodDialog = false
         else if (settingsOverlay && settingsSubpage != null) settingsSubpage = null
         else if (settingsOverlay && settingsCategory != null) { settingsOverlay = false; settingsCategory = null }
         else if (settingsOverlay) settingsOverlay = false
-        else if (menuExpanded) menuExpanded = false
+        else if (menuExpanded) { menuExpanded = false; returnSearchFocusPending = true }
         else if (m.tab == "channel") m.tab = m.channelReturnTab
         else if (m.tab == "server_channels") m.tab = "channels"
         else when (m.exitMode) {
@@ -1880,8 +1888,17 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             }
             val isMenuKey = keyCode == android.view.KeyEvent.KEYCODE_MENU || keyCode == android.view.KeyEvent.KEYCODE_INFO || keyCode == android.view.KeyEvent.KEYCODE_SETTINGS
             when {
+                event.type == KeyEventType.KeyDown && menuExpanded && event.key == Key.DirectionRight -> {
+                    menuExpanded = false
+                    returnSearchFocusPending = true
+                    true
+                }
                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft && !menuExpanded -> {
                     if (focusManager.moveFocus(FocusDirection.Left)) true else { menuExpanded = true; true }
+                }
+                event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp && !menuExpanded && m.showSearchIcon && !searchButtonFocused -> {
+                    if (focusManager.moveFocus(FocusDirection.Up)) true
+                    else { runCatching { searchButtonFocusRequester.requestFocus() }; true }
                 }
                 isMenuKey && event.type == KeyEventType.KeyDown && focusedVideoMenu != null -> {
                     focusedVideoMenu?.second?.invoke()
@@ -3372,9 +3389,9 @@ internal fun formatPublishedDate(value: String?): String? {
                         onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen(video) },
                         modifier = Modifier.width(250.dp)
                             .then(if (video.uuid == videos.firstOrNull()?.uuid && firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
-                            .then(if (downFocusRequester != null || (video.uuid == videos.firstOrNull()?.uuid && upFocusRequester != null)) Modifier.focusProperties {
+                            .then(if (downFocusRequester != null || upFocusRequester != null) Modifier.focusProperties {
                                 if (downFocusRequester != null) down = downFocusRequester
-                                if (video.uuid == videos.firstOrNull()?.uuid && upFocusRequester != null) up = upFocusRequester
+                                if (upFocusRequester != null) up = upFocusRequester
                             } else Modifier)
                             .scale(if (focused) 1.05f else 1f)
                             .onFocusChanged {
