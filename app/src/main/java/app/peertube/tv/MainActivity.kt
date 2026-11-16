@@ -21,6 +21,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.core.os.LocaleListCompat
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.basicMarquee
@@ -1543,6 +1544,11 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val lifecycleOwner = context as? LifecycleOwner
     val focusManager = LocalFocusManager.current
     val menuFocusRequester = remember { FocusRequester() }
+    val searchButtonFocusRequester = remember { FocusRequester() }
+    val homeFirstCardFocusRequester = remember { FocusRequester() }
+    val firstSearchResultFocusRequester = remember { FocusRequester() }
+    var searchResultFocusPending by remember { mutableStateOf(false) }
+    var searchButtonFocused by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var settingsOverlay by remember { mutableStateOf(false) }
     var focusedVideoMenu by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
@@ -1827,6 +1833,13 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             }
         }
     }
+    LaunchedEffect(m.tab, hasSearchSubmitted, m.videos.size, searchResultFocusPending) {
+        if (m.tab == "sepia" && hasSearchSubmitted && m.videos.isNotEmpty() && searchResultFocusPending) {
+            kotlinx.coroutines.delay(80)
+            runCatching { firstSearchResultFocusRequester.requestFocus() }
+            searchResultFocusPending = false
+        }
+    }
     val navigateToSection: (String, Boolean) -> Unit = { key, closeMenu ->
         if (closeMenu) menuExpanded = false
         if (key == "settings") {
@@ -1913,13 +1926,13 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
                 if (m.showSearchIcon) {
-                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).background(MaterialTheme.colorScheme.primary, CircleShape)) {
+                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, Color.White, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
                     SearchGlyph()
                 }
                 }
                 if (accountState.active != null) {
                     val activeAccount = accountState.active!!
-                    IconButton(onClick = { settingsCategory = "accounts"; settingsSubpage = null; settingsOverlay = true }, modifier = Modifier.size(44.dp).padding(start = 4.dp)) {
+                    IconButton(onClick = { settingsCategory = "accounts"; settingsSubpage = null; settingsOverlay = true }, modifier = Modifier.padding(start = if (m.showSearchIcon) 18.dp else 0.dp).size(44.dp)) {
                         if (!activeAccount.avatar.isNullOrBlank()) AsyncImage(activeAccount.avatar, contentDescription = activeAccount.displayName,
                             modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentScale = ContentScale.Crop)
                         else Icon(Icons.Filled.AccountCircle, contentDescription = activeAccount.displayName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxSize())
@@ -2168,7 +2181,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     OutlinedTextField(
                         value = searchText,
                         onValueChange = { searchText = it; if (it.isBlank()) hasSearchSubmitted = false },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && searchText.isNotBlank()) {
+                                searchResultFocusPending = true
+                                true
+                            } else false
+                        },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge,
                         label = { Text(stringResource(R.string.search_peertube), style = MaterialTheme.typography.labelSmall) }
@@ -2203,12 +2221,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (video.uuid == sortedSearchVideos.firstOrNull()?.uuid) firstSearchResultFocusRequester else null) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == sortedSearchVideos.firstOrNull()?.uuid) firstSearchResultFocusRequester else null) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
@@ -2232,7 +2250,6 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     onImportBackup = launchBackupRestore
                 )
             } else if (m.tab == "home") {
-                val latestShelfFirstCardFocus = remember { FocusRequester() }
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                     if (m.recommendations.isNotEmpty()) {
                         item {
@@ -2242,7 +2259,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 server = m.server,
                                 watchProgressMs = m.watchProgressMs,
                                 tickerSpeed = m.tickerSpeed,
-                                downFocusRequester = latestShelfFirstCardFocus,
+                                downFocusRequester = homeFirstCardFocusRequester,
+                                upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
                                 onOpen = { video -> openVideoInQueue(video, m.recommendations) },
                                 isFavorite = { video -> video.uuid in m.favoriteIds },
@@ -2264,7 +2282,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             server = m.server,
                             watchProgressMs = m.watchProgressMs,
                             tickerSpeed = m.tickerSpeed,
-                                firstCardFocusRequester = latestShelfFirstCardFocus,
+                                firstCardFocusRequester = homeFirstCardFocusRequester,
+                                upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
                             onOpen = { video -> openVideoInQueue(video, m.sortVideos(m.videos)) },
                             isFavorite = { video -> video.uuid in m.favoriteIds },
@@ -3070,13 +3089,13 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}) {
+@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null) {
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
     val showContextMenu: () -> Unit = { suppressOpenAfterMenu = true; contextMenu = true }
     val dismissContextMenu: () -> Unit = { contextMenu = false; suppressOpenAfterMenu = false }
     Box(Modifier.fillMaxWidth()) {
-        Row(Modifier.fillMaxWidth()
+        Row(Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
             .onFocusChanged { state -> if (state.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null) }
             .remoteCenterPress(onOpen, showContextMenu, holdSeconds)
             .combinedClickable(onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen() }, onLongClick = showContextMenu).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3096,7 +3115,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}) {
+@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
@@ -3105,7 +3124,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
     val channel = video.channel?.name ?: video.account?.name ?: video.channel?.displayName ?: video.account?.displayName ?: ""
     Box {
         Card(
-            modifier = Modifier.fillMaxWidth().zIndex(if (focused) 1f else 0f)
+            modifier = Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier).zIndex(if (focused) 1f else 0f)
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null)
@@ -3121,11 +3140,11 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
         ) {
             Column {
                 VideoThumbnail(video, server, Modifier.fillMaxWidth().aspectRatio(16f / 9f), progress)
-                Column(Modifier.fillMaxWidth().height((titleLines * 20 + 80).dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    TranslatedVideoMetadataText(video.name, style = MaterialTheme.typography.titleSmall, maxLines = titleLines, minLines = titleLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (focused) Modifier.basicMarquee(velocity = 30.dp * tickerSpeed) else Modifier)
-                    Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    Text(stringResource(R.string.video_views, video.views.toString()), style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                    PublishedDate(video.publishedAt)
+                Column(Modifier.fillMaxWidth().height((titleLines * 23 + 80).dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    TranslatedVideoMetadataText(video.name, style = MaterialTheme.typography.titleMedium, maxLines = titleLines, minLines = titleLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (focused) Modifier.basicMarquee(velocity = 30.dp * tickerSpeed) else Modifier)
+                    Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.video_views, video.views.toString()), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    PublishedDate(video.publishedAt, if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -3268,9 +3287,9 @@ private fun VideoContextMenu(
     }
 }
 
-@Composable private fun PublishedDate(publishedAt: String?) {
+@Composable private fun PublishedDate(publishedAt: String?, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     val formatted = remember(publishedAt, Locale.getDefault()) { formatPublishedDate(publishedAt) }
-    if (formatted != null) Text(stringResource(R.string.video_published, formatted), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    if (formatted != null) Text(stringResource(R.string.video_published, formatted), style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1)
 }
 
 internal fun formatPublishedDate(value: String?): String? {
@@ -3334,6 +3353,7 @@ internal fun formatPublishedDate(value: String?): String? {
     titleLines: Int = 2,
     downFocusRequester: FocusRequester? = null,
     firstCardFocusRequester: FocusRequester? = null,
+    upFocusRequester: FocusRequester? = null,
     onExcludeRecommendation: (Video) -> Unit = {},
     onMarkWatched: (Video) -> Unit = {}
 ) {
@@ -3352,7 +3372,10 @@ internal fun formatPublishedDate(value: String?): String? {
                         onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen(video) },
                         modifier = Modifier.width(250.dp)
                             .then(if (video.uuid == videos.firstOrNull()?.uuid && firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
-                            .then(if (downFocusRequester != null) Modifier.focusProperties { down = downFocusRequester } else Modifier)
+                            .then(if (downFocusRequester != null || (video.uuid == videos.firstOrNull()?.uuid && upFocusRequester != null)) Modifier.focusProperties {
+                                if (downFocusRequester != null) down = downFocusRequester
+                                if (video.uuid == videos.firstOrNull()?.uuid && upFocusRequester != null) up = upFocusRequester
+                            } else Modifier)
                             .scale(if (focused) 1.05f else 1f)
                             .onFocusChanged {
                                 focused = it.isFocused
@@ -3381,7 +3404,7 @@ internal fun formatPublishedDate(value: String?): String? {
                                 )
                                 Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                                 val date = formatPublishedDate(video.publishedAt) ?: stringResource(R.string.shelf_date_unknown)
-                                Text(stringResource(R.string.shelf_video_stats, video.views.toString(), date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                Text(stringResource(R.string.shelf_video_stats, video.views.toString(), date), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
                         }
                     }

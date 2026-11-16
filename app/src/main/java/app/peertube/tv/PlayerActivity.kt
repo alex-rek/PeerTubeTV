@@ -1040,12 +1040,14 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     showControls(); true
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (!controlsVisible) showControls()
+                    if (!controlsVisible) { progressFocused = false; focusedControlIndex = 0; showControls() }
                     else if (progressFocused || focusedControlIndex < 0) { progressFocused = false; focusedControlIndex = 0; showControls() }
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (controlsVisible) { focusedControlIndex = -1; progressFocused = false; controlsVisible = false; controlsInteractionToken++ }
+                    if (!controlsVisible) { focusedControlIndex = -1; progressFocused = true; showControls() }
+                    else if (progressFocused) { focusedControlIndex = -1; progressFocused = false; controlsVisible = false; controlsInteractionToken++ }
+                    else { focusedControlIndex = -1; progressFocused = true; showControls() }
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
