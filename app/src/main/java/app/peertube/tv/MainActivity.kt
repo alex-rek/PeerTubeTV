@@ -1545,7 +1545,11 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val focusManager = LocalFocusManager.current
     val menuFocusRequester = remember { FocusRequester() }
     val searchButtonFocusRequester = remember { FocusRequester() }
+    val menuFocusScope = rememberCoroutineScope()
+    val pendingMenuFocus = remember { arrayOfNulls<Pair<String, Job>>(1) }
     val homeFirstCardFocusRequester = remember { FocusRequester() }
+    val homeLatestFirstCardFocusRequester = remember { FocusRequester() }
+    val sectionFirstFocusRequester = remember { FocusRequester() }
     val firstSearchResultFocusRequester = remember { FocusRequester() }
     var searchResultFocusPending by remember { mutableStateOf(false) }
     var returnSearchFocusPending by remember { mutableStateOf(false) }
@@ -1645,7 +1649,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         else if (settingsOverlay && settingsSubpage != null) settingsSubpage = null
         else if (settingsOverlay && settingsCategory != null) { settingsOverlay = false; settingsCategory = null }
         else if (settingsOverlay) settingsOverlay = false
-        else if (menuExpanded) { menuExpanded = false; returnSearchFocusPending = true }
+        else if (menuExpanded) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null; returnSearchFocusPending = true }
         else if (m.tab == "channel") m.tab = m.channelReturnTab
         else if (m.tab == "server_channels") m.tab = "channels"
         else when (m.exitMode) {
@@ -1675,7 +1679,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 "channels" -> m.syncSubscriptions()
                 "home" -> m.load()
             }
-            m.loadRecommendations()
+            if (m.tab != "recommendations") m.loadRecommendations()
         }
         homeInitialized = true
     }
@@ -1849,7 +1853,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         }
     }
     val navigateToSection: (String, Boolean) -> Unit = { key, closeMenu ->
-        if (closeMenu) menuExpanded = false
+        if (closeMenu) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null }
+        val sectionChanged = m.tab != key
         if (key == "settings") {
             settingsCategory = null
             settingsSubpage = null
@@ -1858,13 +1863,15 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         } else {
             settingsOverlay = false
             m.tab = key
-            when (key) {
-                "popular" -> if (m.popularVideosServer != m.server || m.popularVideos.isEmpty()) m.loadPopular()
-                "home" -> m.load()
-                "instances" -> m.loadInstances()
-                "recommendations" -> m.loadRecommendations()
-                "subscriptions" -> m.loadSubscriptions()
-                "channels" -> m.syncSubscriptions()
+            if (sectionChanged) {
+                when (key) {
+                    "popular" -> if (m.popularVideosServer != m.server || m.popularVideos.isEmpty()) m.loadPopular()
+                    "home" -> if (m.videos.isEmpty()) m.load()
+                    "instances" -> if (m.instances.isEmpty()) m.loadInstances()
+                    "recommendations" -> if (m.recommendations.isEmpty()) m.loadRecommendations()
+                    "subscriptions" -> if (m.subscriptionVideos.isEmpty()) m.loadSubscriptions()
+                    "channels" -> m.syncSubscriptions()
+                }
             }
         }
     }
@@ -1890,6 +1897,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             when {
                 event.type == KeyEventType.KeyDown && menuExpanded && event.key == Key.DirectionRight -> {
                     menuExpanded = false
+                    pendingMenuFocus[0]?.second?.cancel()
+                    pendingMenuFocus[0] = null
                     returnSearchFocusPending = true
                     true
                 }
@@ -1934,7 +1943,19 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     }
                     NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = Color.White, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
                         navFocused = it.isFocused
-                        if (it.isFocused) navigateToSection(key, false)
+                        if (it.isFocused) {
+                            pendingMenuFocus[0]?.second?.cancel()
+                            pendingMenuFocus[0] = key to menuFocusScope.launch {
+                                delay(220)
+                                if (menuExpanded && pendingMenuFocus[0]?.first == key) {
+                                    pendingMenuFocus[0] = null
+                                    navigateToSection(key, false)
+                                }
+                            }
+                        } else if (pendingMenuFocus[0]?.first == key) {
+                            pendingMenuFocus[0]?.second?.cancel()
+                            pendingMenuFocus[0] = null
+                        }
                     }.then(if (key == "home") Modifier.focusRequester(menuFocusRequester) else Modifier))
                 }
               }
@@ -1943,7 +1964,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
                 if (m.showSearchIcon) {
-                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, Color.White, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
+                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, Color.White, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
                     SearchGlyph()
                 }
                 }
@@ -1966,7 +1987,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             Spacer(Modifier.height(24.dp))
             if (m.tab == "instances") {
                 Text(stringResource(R.string.settings_server), style = MaterialTheme.typography.headlineSmall)
-                OutlinedTextField(value = m.server, onValueChange = { m.server = it }, label = { Text(stringResource(R.string.server_hint)) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true)
+                OutlinedTextField(value = m.server, onValueChange = { m.server = it }, label = { Text(stringResource(R.string.server_hint)) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(sectionFirstFocusRequester), singleLine = true)
                 Button(onClick = { m.save(); m.load(); m.tab = "home" }, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.connect)) }
                 HorizontalDivider(Modifier.padding(vertical = 14.dp))
                 Text(stringResource(R.string.directory_title), style = MaterialTheme.typography.headlineSmall)
@@ -2106,7 +2127,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         channel.displayName,
-                                        Modifier.weight(0.40f).clickable { m.loadChannelVideos(channel.name, channel.host) },
+                                        Modifier.weight(0.40f).then(if (channel == accountChannels.firstOrNull()) Modifier.focusRequester(sectionFirstFocusRequester) else Modifier).clickable { m.loadChannelVideos(channel.name, channel.host) },
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.primary,
                                         textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
@@ -2141,7 +2162,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         items(localChannels, key = { "local:${it.name}@${it.host}" }) { channel ->
                             Column {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(channel.displayName, Modifier.weight(0.40f).clickable { m.loadChannelVideos(channel.name, channel.host) },
+                                    Text(channel.displayName, Modifier.weight(0.40f).then(if (accountChannels.isEmpty() && channel == localChannels.firstOrNull()) Modifier.focusRequester(sectionFirstFocusRequester) else Modifier).clickable { m.loadChannelVideos(channel.name, channel.host) },
                                         style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary,
                                         textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline, maxLines = 2,
                                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
@@ -2168,7 +2189,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         items(m.serverChannels, key = { "${it.id ?: it.name.orEmpty()}@${it.host}" }) { channel ->
                             TextButton(
                                 onClick = { channel.name?.takeIf(String::isNotBlank)?.let { name -> m.loadChannelVideos(name, channel.host ?: m.activeServerChannelsHost) } },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().then(if (channel == m.serverChannels.firstOrNull()) Modifier.focusRequester(sectionFirstFocusRequester) else Modifier),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                             ) {
                                 Column(Modifier.fillMaxWidth()) {
@@ -2248,11 +2269,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     }
                 }
             } else if (m.tab == "settings") {
-                SettingsDashboard(
+                        SettingsDashboard(
                     model = m,
                     selectedCategory = null,
                     selectedSubpage = null,
                     requestInitialFocus = !menuExpanded,
+                            firstFocusRequester = sectionFirstFocusRequester,
                     onSelectCategory = { category ->
                         settingsCategory = category
                         settingsSubpage = null
@@ -2276,7 +2298,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 server = m.server,
                                 watchProgressMs = m.watchProgressMs,
                                 tickerSpeed = m.tickerSpeed,
-                                downFocusRequester = homeFirstCardFocusRequester,
+                                firstCardFocusRequester = homeFirstCardFocusRequester,
+                                downFocusRequester = homeLatestFirstCardFocusRequester,
                                 upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
                                 onOpen = { video -> openVideoInQueue(video, m.recommendations) },
@@ -2299,7 +2322,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             server = m.server,
                             watchProgressMs = m.watchProgressMs,
                             tickerSpeed = m.tickerSpeed,
-                                firstCardFocusRequester = homeFirstCardFocusRequester,
+                                firstCardFocusRequester = if (m.recommendations.isEmpty()) homeFirstCardFocusRequester else homeLatestFirstCardFocusRequester,
                                 upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
                             onOpen = { video -> openVideoInQueue(video, m.sortVideos(m.videos)) },
@@ -2352,22 +2375,22 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
                         if (m.liveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_now_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.liveVideos, key = { "live-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                            items(m.liveVideos, key = { "live-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == m.liveVideos.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
                         }
                         if (m.recentlyEndedLiveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_recent_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.recentlyEndedLiveVideos, key = { "ended-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                            items(m.recentlyEndedLiveVideos, key = { "ended-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (m.liveVideos.isEmpty() && video.uuid == m.recentlyEndedLiveVideos.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
                         }
                     }
                 } else if (m.tab == "popular" && rows.isEmpty()) {
                     // Loading, empty-state, or error are rendered with the section heading above.
                 } else if (m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }) }
+                        items(rows, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (video.uuid == rows.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }) }
+                        items(rows, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == rows.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
                     }
                 }
             }
@@ -2540,6 +2563,7 @@ private fun SettingsDashboard(
     selectedCategory: String?,
     selectedSubpage: String?,
     requestInitialFocus: Boolean,
+    firstFocusRequester: FocusRequester? = null,
     onSelectCategory: (String?) -> Unit,
     onSelectSubpage: (String?) -> Unit,
     historyPeriodHours: Int,
@@ -2549,7 +2573,7 @@ private fun SettingsDashboard(
     onExportBackup: () -> Unit,
     onImportBackup: () -> Unit
 ) {
-    val firstSettingsCardFocus = remember { FocusRequester() }
+    val firstSettingsCardFocus = firstFocusRequester ?: remember { FocusRequester() }
     LaunchedEffect(selectedCategory, requestInitialFocus) {
         if (selectedCategory == null && requestInitialFocus) runCatching { firstSettingsCardFocus.requestFocus() }
     }
