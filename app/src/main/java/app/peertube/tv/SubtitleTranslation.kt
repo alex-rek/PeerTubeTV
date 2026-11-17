@@ -121,15 +121,12 @@ private fun ensureTranslationModelsAvailable(
     sourceLanguage: String,
     targetLanguage: String
 ) {
-    val downloadedLanguages = runCatching {
-        Tasks.await(RemoteModelManager.getInstance().getDownloadedModels(TranslateRemoteModel::class.java), 20, TimeUnit.SECONDS)
-            .map { it.language.lowercase() }.toSet()
-    }.getOrNull()
-    val source = sourceLanguage.lowercase()
-    val target = targetLanguage.lowercase()
-    if (downloadedLanguages == null || source !in downloadedLanguages || target !in downloadedLanguages) {
-        Tasks.await(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()), 120, TimeUnit.SECONDS)
-    }
+    // ML Kit's translator owns the model pair and can reliably determine whether
+    // either model is missing or incomplete. Querying RemoteModelManager first can
+    // return stale state on some Android TV Play Services builds, so always use
+    // the idempotent translator API before translating.
+    require(sourceLanguage.isNotBlank() && targetLanguage.isNotBlank()) { "Subtitle translation languages are missing" }
+    Tasks.await(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()), 120, TimeUnit.SECONDS)
 }
 
 /** Identifies and translates metadata on device; successful translations are persisted for reuse. */

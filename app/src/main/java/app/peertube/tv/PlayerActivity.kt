@@ -796,7 +796,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 if (error is CancellationException) throw error
                 subtitleTranslationEnabled = false
                 translationPreparing = false
-                translationError = error.localizedMessage ?: context.getString(R.string.subtitle_translation_failed)
+                val causeChain = generateSequence(error) { it.cause }.take(6).toList()
+                val modelRuntimeFailure = causeChain.any {
+                    it is NullPointerException || it.localizedMessage?.contains("Attempt to read from field", ignoreCase = true) == true
+                }
+                translationError = if (modelRuntimeFailure) context.getString(R.string.subtitle_translation_model_error)
+                    else error.localizedMessage ?: context.getString(R.string.subtitle_translation_failed)
                 translatedCues.clear()
                 sourceSubtitleCues.clear()
                 if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)

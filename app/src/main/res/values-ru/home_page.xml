@@ -1,0 +1,35 @@
+<resources>
+    <string name="home_content">Контент на Главной</string>
+    <string name="home_mode_recommended">Рекомендации и последние видео</string>
+    <string name="home_mode_interests">Интересы</string>
+    <string name="home_mode_server">Видео с сервера</string>
+    <string name="home_mode_channel">Видео с канала</string>
+    <string name="home_interests_help">Выберите категории видео для Главной страницы.</string>
+    <string name="home_interests_empty">Выберите хотя бы одну категорию.</string>
+    <string name="home_server_address">Адрес сервера PeerTube</string>
+    <string name="home_server_hint">Оставьте поле пустым, чтобы использовать выбранный сейчас сервер.</string>
+    <string name="home_channel_address">Ссылка на канал или канал@сервер</string>
+    <string name="home_source_check_save">Проверить и сохранить</string>
+    <string name="home_source_saved">Источник проверен и сохранён.</string>
+    <string name="home_source_invalid">Не удалось проверить источник. Проверьте адрес и соединение.</string>
+    <string name="home_source_empty">Для выбранного источника не найдено видео.</string>
+    <string name="home_interest_music">Музыка</string>
+    <string name="home_interest_films">Фильмы</string>
+    <string name="home_interest_vehicles">Транспорт</string>
+    <string name="home_interest_art">Искусство</string>
+    <string name="home_interest_sports">Спорт</string>
+    <string name="home_interest_travel">Путешествия</string>
+    <string name="home_interest_gaming">Игры</string>
+    <string name="home_interest_people">Люди</string>
+    <string name="home_interest_comedy">Комедия</string>
+    <string name="home_interest_entertainment">Развлечения</string>
+    <string name="home_interest_news">Новости</string>
+    <string name="home_interest_howto">Инструкции</string>
+    <string name="home_interest_education">Образование</string>
+    <string name="home_interest_activism">Общественная деятельность</string>
+    <string name="home_interest_science">Наука</string>
+    <string name="home_interest_animals">Животные</string>
+    <string name="home_interest_kids">Дети</string>
+    <string name="home_interest_food">Еда</string>
+    <string name="home_interest_nature">Природа</string>
+</resources>

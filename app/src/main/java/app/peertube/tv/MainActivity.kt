@@ -35,6 +35,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -294,6 +295,20 @@ class HomeModel : ViewModel() {
     private var liveLoadRequestId = 0
     var isSearching by mutableStateOf(false)
     var recommendations by mutableStateOf<List<Video>>(emptyList())
+    var homePageVideos by mutableStateOf<List<Video>>(emptyList())
+    var isLoadingHomePage by mutableStateOf(false)
+    var homePageError by mutableStateOf<String?>(null)
+    var homePageDisplayMode by mutableStateOf("recommended")
+        private set
+    var homePageInterests by mutableStateOf<Set<Int>>(emptySet())
+        private set
+    var homePageServer by mutableStateOf("")
+        private set
+    var homePageChannel by mutableStateOf("")
+        private set
+    var homePageConfigStatus by mutableStateOf<String?>(null)
+        private set
+    private var homePageRequestId = 0
     var subscriptionVideos by mutableStateOf<List<Video>>(emptyList())
     var channelVideos by mutableStateOf<List<Video>>(emptyList())
     var activeChannelTitle by mutableStateOf("")
@@ -479,6 +494,10 @@ class HomeModel : ViewModel() {
         localSubscriptions.clear()
         historyViewedAt.clear()
         server = prefs?.getString("server", server) ?: server
+        homePageDisplayMode = prefs?.getString("homeContentMode", "recommended")?.takeIf { it in homePageDisplayModes } ?: "recommended"
+        homePageInterests = runCatching { PeerTubeGson.instance.fromJson<List<Int>>(prefs?.getString("homeInterests", "[]"), object : TypeToken<List<Int>>() {}.type).orEmpty().filter { it in 1..19 }.toSet() }.getOrDefault(emptySet())
+        homePageServer = prefs?.getString("homeServer", "").orEmpty()
+        homePageChannel = prefs?.getString("homeChannel", "").orEmpty()
         gridMode = prefs?.getBoolean("gridMode", true) ?: true
         afterVideoAction = prefs?.getString("afterVideoAction", "finish") ?: "finish"
         playerOverlayDurationSeconds = (prefs?.getInt("playerOverlayDurationSeconds", 3) ?: 3).coerceIn(3, 10).let { if (it == 3 || it == 5 || it == 10) it else 3 }
@@ -620,6 +639,8 @@ class HomeModel : ViewModel() {
     fun save() {
         val preferences = prefs ?: return
         preferences.edit().putString("server", server).putBoolean("gridMode", gridMode).putString("afterVideoAction", afterVideoAction)
+            .putString("homeContentMode", homePageDisplayMode).putString("homeInterests", PeerTubeGson.instance.toJson(homePageInterests.sorted()))
+            .putString("homeServer", homePageServer).putString("homeChannel", homePageChannel)
             .putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds).putBoolean("showPlayerClock", showPlayerClock)
             .putString("playerClockPosition", playerClockPosition).putString("playerClockSize", playerClockSize).putString("playerClockBackdrop", playerClockBackdrop)
             .putBoolean("resumePlayback", resumePlayback).putString("watchedRecommendationThreshold", watchedRecommendationThreshold)
@@ -659,6 +680,103 @@ class HomeModel : ViewModel() {
                     }
                     if (changed) editor.apply()
                 }
+            }
+        }
+    }
+    fun updateHomePageDisplayMode(mode: String) {
+        homePageDisplayMode = mode.takeIf { it in homePageDisplayModes } ?: "recommended"
+        homePageVideos = emptyList()
+        homePageConfigStatus = null
+        save()
+        if (tab == "home") loadHomePage()
+    }
+    fun updateHomePageInterest(id: Int, enabled: Boolean) {
+        if (id !in 1..19) return
+        homePageInterests = if (enabled) homePageInterests + id else homePageInterests - id
+        homePageVideos = emptyList()
+        save()
+        if (tab == "home" && homePageDisplayMode == "interests") loadHomePage()
+    }
+    fun saveHomePageServer(value: String) {
+        viewModelScope.launch {
+            homePageConfigStatus = null
+            val result = runCatchingCancellable {
+                val origin = accountServerOrigin(value)
+                ApiFactory.create(origin).videos(count = 1, isLocal = true, nsfw = "false")
+                origin
+            }
+            result.onSuccess { origin ->
+                homePageServer = origin
+                homePageVideos = emptyList()
+                homePageConfigStatus = appContext?.getString(R.string.home_source_saved)
+                save()
+                if (tab == "home" && homePageDisplayMode == "server") loadHomePage()
+            }.onFailure { homePageConfigStatus = appContext?.getString(R.string.home_source_invalid) }
+        }
+    }
+    fun saveHomePageChannel(value: String) {
+        viewModelScope.launch {
+            homePageConfigStatus = null
+            val result = runCatchingCancellable {
+                val channel = parseHomeChannelAddress(value)
+                ApiFactory.create(channel.origin).channelVideos(channel.handle, count = 1)
+                channel
+            }
+            result.onSuccess { channel ->
+                homePageChannel = "${channel.name}@${channel.host}"
+                homePageVideos = emptyList()
+                homePageConfigStatus = appContext?.getString(R.string.home_source_saved)
+                save()
+                if (tab == "home" && homePageDisplayMode == "channel") loadHomePage()
+            }.onFailure { homePageConfigStatus = appContext?.getString(R.string.home_source_invalid) }
+        }
+    }
+    fun loadHomePage() {
+        if (homePageDisplayMode == "recommended") {
+            homePageVideos = emptyList()
+            homePageError = null
+            load()
+            return
+        }
+        val requestId = ++homePageRequestId
+        val requestedServer = server
+        val mode = homePageDisplayMode
+        val interests = homePageInterests
+        val sourceServer = homePageServer
+        val sourceChannel = homePageChannel
+        viewModelScope.launch {
+            isLoadingHomePage = true
+            homePageError = null
+            try {
+                val videos = when (mode) {
+                    "interests" -> {
+                        require(interests.isNotEmpty()) { appContext?.getString(R.string.home_interests_empty).orEmpty() }
+                        ApiFactory.create(requestedServer).videos(categoryOneOf = interests.sorted(), nsfw = "false").data
+                    }
+                    "server" -> {
+                        val origin = accountServerOrigin(sourceServer.ifBlank { requestedServer })
+                        ApiFactory.create(origin).videos(isLocal = true, nsfw = "false").data
+                    }
+                    "channel" -> {
+                        val channel = parseHomeChannelAddress(sourceChannel)
+                        ApiFactory.create(channel.origin).channelVideos(channel.handle)
+                            .data.filterNot { it.nsfw }.map { it.copy(host = it.host ?: channel.host) }
+                    }
+                    else -> emptyList()
+                }
+                if (requestId == homePageRequestId && requestedServer == server && mode == homePageDisplayMode) {
+                    homePageVideos = videos
+                    homePageError = if (videos.isEmpty()) appContext?.getString(R.string.home_source_empty) else null
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (requestId == homePageRequestId) {
+                    homePageVideos = emptyList()
+                    homePageError = error.localizedMessage ?: appContext?.getString(R.string.home_source_invalid)
+                }
+            } finally {
+                if (requestId == homePageRequestId) isLoadingHomePage = false
             }
         }
     }
@@ -1530,7 +1648,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val isTvDevice = remember { isTelevisionDevice(context) }
     val tvProviderPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            m.load()
+            m.loadHomePage()
             m.loadRecommendations()
         }
     }
@@ -1551,6 +1669,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val homeLatestFirstCardFocusRequester = remember { FocusRequester() }
     val sectionFirstFocusRequester = remember { FocusRequester() }
     val firstSearchResultFocusRequester = remember { FocusRequester() }
+    var focusedMenuSectionKey by remember { mutableStateOf("home") }
+    var sectionFocusPending by remember { mutableStateOf(false) }
     var searchResultFocusPending by remember { mutableStateOf(false) }
     var returnSearchFocusPending by remember { mutableStateOf(false) }
     var searchButtonFocused by remember { mutableStateOf(false) }
@@ -1599,7 +1719,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     "recommendations" -> m.loadRecommendations()
                     "subscriptions" -> m.loadSubscriptions()
                     "channels" -> m.syncSubscriptions()
-                    "home" -> m.load()
+                    "home" -> m.loadHomePage()
                 }
             }.onFailure {
                 m.error = it.localizedMessage ?: context.getString(R.string.error_request)
@@ -1643,13 +1763,23 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             returnSearchFocusPending = false
         }
     }
+    LaunchedEffect(menuExpanded, sectionFocusPending, m.tab, m.videos.size, m.recommendations.size, m.popularVideos.size, m.liveVideos.size, m.subscriptionVideos.size, m.instances.size) {
+        if (!menuExpanded && sectionFocusPending) {
+            kotlinx.coroutines.delay(100)
+            val target = when (m.tab) {
+                "home" -> homeFirstCardFocusRequester
+                else -> sectionFirstFocusRequester
+            }
+            if (runCatching { target.requestFocus() }.getOrDefault(false)) sectionFocusPending = false
+        }
+    }
     BackHandler {
         if (clearHistoryDialog) clearHistoryDialog = false
         else if (clearHistoryPeriodDialog) clearHistoryPeriodDialog = false
         else if (settingsOverlay && settingsSubpage != null) settingsSubpage = null
         else if (settingsOverlay && settingsCategory != null) { settingsOverlay = false; settingsCategory = null }
         else if (settingsOverlay) settingsOverlay = false
-        else if (menuExpanded) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null; returnSearchFocusPending = true }
+        else if (menuExpanded) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null; sectionFocusPending = true }
         else if (m.tab == "channel") m.tab = m.channelReturnTab
         else if (m.tab == "server_channels") m.tab = "channels"
         else when (m.exitMode) {
@@ -1677,7 +1807,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 "recommendations" -> m.loadRecommendations()
                 "subscriptions" -> m.loadSubscriptions()
                 "channels" -> m.syncSubscriptions()
-                "home" -> m.load()
+                "home" -> m.loadHomePage()
             }
             if (m.tab != "recommendations") m.loadRecommendations()
         }
@@ -1853,7 +1983,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         }
     }
     val navigateToSection: (String, Boolean) -> Unit = { key, closeMenu ->
-        if (closeMenu) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null }
+        if (closeMenu) { menuExpanded = false; pendingMenuFocus[0]?.second?.cancel(); pendingMenuFocus[0] = null; returnSearchFocusPending = false; sectionFocusPending = true }
         val sectionChanged = m.tab != key
         if (key == "settings") {
             settingsCategory = null
@@ -1866,7 +1996,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             if (sectionChanged) {
                 when (key) {
                     "popular" -> if (m.popularVideosServer != m.server || m.popularVideos.isEmpty()) m.loadPopular()
-                    "home" -> if (m.videos.isEmpty()) m.load()
+                    "home" -> if (m.videos.isEmpty() || m.homePageDisplayMode != "recommended" && m.homePageVideos.isEmpty()) m.loadHomePage()
                     "instances" -> if (m.instances.isEmpty()) m.loadInstances()
                     "recommendations" -> if (m.recommendations.isEmpty()) m.loadRecommendations()
                     "subscriptions" -> if (m.subscriptionVideos.isEmpty()) m.loadSubscriptions()
@@ -1899,6 +2029,15 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     menuExpanded = false
                     pendingMenuFocus[0]?.second?.cancel()
                     pendingMenuFocus[0] = null
+                    returnSearchFocusPending = false
+                    sectionFocusPending = true
+                    true
+                }
+                event.type == KeyEventType.KeyDown && menuExpanded && event.key == Key.DirectionUp && focusedMenuSectionKey == "home" && m.showSearchIcon -> {
+                    menuExpanded = false
+                    pendingMenuFocus[0]?.second?.cancel()
+                    pendingMenuFocus[0] = null
+                    sectionFocusPending = false
                     returnSearchFocusPending = true
                     true
                 }
@@ -1944,6 +2083,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = Color.White, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
                         navFocused = it.isFocused
                         if (it.isFocused) {
+                            focusedMenuSectionKey = key
                             pendingMenuFocus[0]?.second?.cancel()
                             pendingMenuFocus[0] = key to menuFocusScope.launch {
                                 delay(220)
@@ -1988,7 +2128,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             if (m.tab == "instances") {
                 Text(stringResource(R.string.settings_server), style = MaterialTheme.typography.headlineSmall)
                 OutlinedTextField(value = m.server, onValueChange = { m.server = it }, label = { Text(stringResource(R.string.server_hint)) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp).focusRequester(sectionFirstFocusRequester), singleLine = true)
-                Button(onClick = { m.save(); m.load(); m.tab = "home" }, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.connect)) }
+                Button(onClick = { m.save(); m.loadHomePage(); m.tab = "home" }, modifier = Modifier.padding(top = 8.dp)) { Text(stringResource(R.string.connect)) }
                 HorizontalDivider(Modifier.padding(vertical = 14.dp))
                 Text(stringResource(R.string.directory_title), style = MaterialTheme.typography.headlineSmall)
                 Text(stringResource(R.string.directory_help), modifier = Modifier.padding(top = 4.dp, bottom = 12.dp))
@@ -2064,7 +2204,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                     }
                                     Column(Modifier.focusGroup()) {
                                         TextButton(
-                                            onClick = { m.server = "https://${discovered.host}"; m.save(); m.tab = "home"; m.load() },
+                                            onClick = { m.server = "https://${discovered.host}"; m.save(); m.tab = "home"; m.loadHomePage() },
                                             modifier = Modifier.heightIn(min = 52.dp)
                                         ) { Text(stringResource(R.string.connect)) }
                                         TextButton(
@@ -2089,7 +2229,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             m.server = "https://${instance.host}"
                             m.save()
                             m.tab = "home"
-                            m.load()
+                            m.loadHomePage()
                         }, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(14.dp)) {
                                 Text(instance.name?.takeIf(String::isNotBlank) ?: instance.host, style = MaterialTheme.typography.titleMedium)
@@ -2259,12 +2399,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (video.uuid == sortedSearchVideos.firstOrNull()?.uuid) firstSearchResultFocusRequester else null) }
+                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) firstSearchResultFocusRequester else null, if (index == 0) searchButtonFocusRequester else null) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(sortedSearchVideos, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == sortedSearchVideos.firstOrNull()?.uuid) firstSearchResultFocusRequester else null) }
+                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) firstSearchResultFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
@@ -2289,7 +2429,14 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     onImportBackup = launchBackupRestore
                 )
             } else if (m.tab == "home") {
+                val customHomeTitle = stringResource(when (m.homePageDisplayMode) {
+                    "interests" -> R.string.home_mode_interests
+                    "server" -> R.string.home_mode_server
+                    "channel" -> R.string.home_mode_channel
+                    else -> R.string.home_mode_recommended
+                })
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                    if (m.homePageDisplayMode == "recommended") {
                     if (m.recommendations.isNotEmpty()) {
                         item {
                             VideoShelf(
@@ -2337,6 +2484,34 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             onMarkWatched = m::markRecommendationWatched
                         )
                     }
+                    } else {
+                        if (m.isLoadingHomePage) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                        if (!m.homePageError.isNullOrBlank()) item { Text(m.homePageError.orEmpty(), color = if (m.homePageVideos.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
+                        if (m.homePageVideos.isNotEmpty()) {
+                            item {
+                                VideoShelf(
+                                    title = customHomeTitle,
+                                    videos = m.sortVideos(m.homePageVideos),
+                                    server = m.server,
+                                    watchProgressMs = m.watchProgressMs,
+                                    tickerSpeed = m.tickerSpeed,
+                                    firstCardFocusRequester = homeFirstCardFocusRequester,
+                                    upFocusRequester = searchButtonFocusRequester,
+                                    titleLines = m.videoTitleLines,
+                                    onOpen = { video -> openVideoInQueue(video, m.homePageVideos) },
+                                    isFavorite = { video -> video.uuid in m.favoriteIds },
+                                    isSubscribed = m::isSubscribed,
+                                    onFavorite = toggleFavorite,
+                                    onSubscription = m::toggleSubscription,
+                                    onChannel = openChannelVideos,
+                                    setContextMenuTarget = updateFocusedVideoMenu,
+                                    contextMenuHoldSeconds = m.contextMenuHoldSeconds,
+                                    onExcludeRecommendation = m::excludeFromRecommendations,
+                                    onMarkWatched = m::markRecommendationWatched
+                                )
+                            }
+                        }
+                    }
                 }
             } else {
                 if (m.tab == "subscriptions") {
@@ -2375,22 +2550,22 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
                         if (m.liveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_now_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.liveVideos, key = { "live-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == m.liveVideos.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
+                        itemsIndexed(m.liveVideos, key = { _, video -> "live-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
                         }
                         if (m.recentlyEndedLiveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_recent_title), style = MaterialTheme.typography.titleLarge) }
-                            items(m.recentlyEndedLiveVideos, key = { "ended-${it.uuid}" }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (m.liveVideos.isEmpty() && video.uuid == m.recentlyEndedLiveVideos.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
+                            itemsIndexed(m.recentlyEndedLiveVideos, key = { _, video -> "ended-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (m.liveVideos.isEmpty() && index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (m.liveVideos.isEmpty() && index == 0) searchButtonFocusRequester else null) }
                         }
                     }
                 } else if (m.tab == "popular" && rows.isEmpty()) {
                     // Loading, empty-state, or error are rendered with the section heading above.
                 } else if (m.gridMode) {
                     LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (video.uuid == rows.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
+                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) sectionFirstFocusRequester else null, if (index == 0) searchButtonFocusRequester else null) }
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(rows, key = { it.uuid }) { video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (video.uuid == rows.firstOrNull()?.uuid) sectionFirstFocusRequester else null) }
+                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
                     }
                 }
             }
@@ -2579,6 +2754,8 @@ private fun SettingsDashboard(
     }
     val settingsContext = LocalContext.current
     val playerPrefs = remember(settingsContext) { settingsContext.getSharedPreferences("peertube", 0) }
+    var homeServerDraft by remember(model.homePageServer) { mutableStateOf(model.homePageServer) }
+    var homeChannelDraft by remember(model.homePageChannel) { mutableStateOf(model.homePageChannel) }
     var customIndexesInput by remember { mutableStateOf(model.searchSettings.customIndexUrls.joinToString("\n")) }
     var manualServerInput by remember { mutableStateOf("") }
     var remoteServerCatalogInput by remember { mutableStateOf(model.serverJsonCatalogUrl()) }
@@ -2787,7 +2964,7 @@ private fun SettingsDashboard(
                             "accounts" -> PeerTubeAccountSettingsPanel(model = model) { server ->
                                 model.server = server
                                 model.save()
-                                model.load()
+                                model.loadHomePage()
                                 model.loadSubscriptions()
                             }
                             "language" -> {
@@ -2810,6 +2987,64 @@ private fun SettingsDashboard(
                                 }
                             }
                             "general" -> {
+                                val homeModeLabel = stringResource(when (model.homePageDisplayMode) {
+                                    "interests" -> R.string.home_mode_interests
+                                    "server" -> R.string.home_mode_server
+                                    "channel" -> R.string.home_mode_channel
+                                    else -> R.string.home_mode_recommended
+                                })
+                                SettingsChoice(stringResource(R.string.home_content), homeModeLabel, listOf(
+                                    "recommended" to stringResource(R.string.home_mode_recommended),
+                                    "interests" to stringResource(R.string.home_mode_interests),
+                                    "server" to stringResource(R.string.home_mode_server),
+                                    "channel" to stringResource(R.string.home_mode_channel)
+                                )) { model.updateHomePageDisplayMode(it) }
+                                when (model.homePageDisplayMode) {
+                                    "interests" -> {
+                                        Text(stringResource(R.string.home_interests_help), style = MaterialTheme.typography.bodySmall)
+                                        val labels = listOf(
+                                            R.string.home_interest_music, R.string.home_interest_films, R.string.home_interest_vehicles,
+                                            R.string.home_interest_art, R.string.home_interest_sports, R.string.home_interest_travel,
+                                            R.string.home_interest_gaming, R.string.home_interest_people, R.string.home_interest_comedy,
+                                            R.string.home_interest_entertainment, R.string.home_interest_news, R.string.home_interest_howto,
+                                            R.string.home_interest_education, R.string.home_interest_activism, R.string.home_interest_science,
+                                            R.string.home_interest_animals, R.string.home_interest_kids, R.string.home_interest_food,
+                                            R.string.home_interest_nature
+                                        )
+                                        labels.forEachIndexed { index, label ->
+                                            val id = index + 1
+                                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                                Text(stringResource(label), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                                Checkbox(checked = id in model.homePageInterests, onCheckedChange = { model.updateHomePageInterest(id, it) })
+                                            }
+                                        }
+                                        if (model.homePageInterests.isEmpty()) Text(stringResource(R.string.home_interests_empty), color = MaterialTheme.colorScheme.error)
+                                    }
+                                    "server" -> {
+                                        OutlinedTextField(
+                                            value = homeServerDraft,
+                                            onValueChange = { homeServerDraft = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            label = { Text(stringResource(R.string.home_server_address)) },
+                                            placeholder = { Text(model.server) }
+                                        )
+                                        Text(stringResource(R.string.home_server_hint), style = MaterialTheme.typography.bodySmall)
+                                        Button(onClick = { model.saveHomePageServer(homeServerDraft.ifBlank { model.server }) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.home_source_check_save)) }
+                                    }
+                                    "channel" -> {
+                                        OutlinedTextField(
+                                            value = homeChannelDraft,
+                                            onValueChange = { homeChannelDraft = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            label = { Text(stringResource(R.string.home_channel_address)) },
+                                            placeholder = { Text("channel@example.org") }
+                                        )
+                                        Button(onClick = { model.saveHomePageChannel(homeChannelDraft) }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.home_source_check_save)) }
+                                    }
+                                }
+                                model.homePageConfigStatus?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                 val launchLabel = stringResource(when (model.launchTab) {
                                     "popular" -> R.string.nav_popular; "live" -> R.string.nav_live; "subscriptions" -> R.string.nav_subscriptions
                                     "channels" -> R.string.nav_channels; "recommendations" -> R.string.nav_recommendations; "instances" -> R.string.nav_instances
@@ -3130,13 +3365,14 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null) {
+@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null) {
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
     val showContextMenu: () -> Unit = { suppressOpenAfterMenu = true; contextMenu = true }
     val dismissContextMenu: () -> Unit = { contextMenu = false; suppressOpenAfterMenu = false }
     Box(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
+            .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier)
             .onFocusChanged { state -> if (state.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null) }
             .remoteCenterPress(onOpen, showContextMenu, holdSeconds)
             .combinedClickable(onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen() }, onLongClick = showContextMenu).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3156,7 +3392,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null) {
+@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null) {
     var focused by remember { mutableStateOf(false) }
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
@@ -3165,7 +3401,9 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
     val channel = video.channel?.name ?: video.account?.name ?: video.channel?.displayName ?: video.account?.displayName ?: ""
     Box {
         Card(
-            modifier = Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier).zIndex(if (focused) 1f else 0f)
+            modifier = Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
+                .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier)
+                .zIndex(if (focused) 1f else 0f)
                 .onFocusChanged {
                     focused = it.isFocused
                     if (it.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null)

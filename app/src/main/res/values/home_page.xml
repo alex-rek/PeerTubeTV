@@ -1,0 +1,35 @@
+<resources>
+    <string name="home_content">Home content</string>
+    <string name="home_mode_recommended">Recommended and latest</string>
+    <string name="home_mode_interests">Interests</string>
+    <string name="home_mode_server">Videos from a server</string>
+    <string name="home_mode_channel">Videos from a channel</string>
+    <string name="home_interests_help">Choose categories for the Home feed.</string>
+    <string name="home_interests_empty">Choose at least one category.</string>
+    <string name="home_server_address">PeerTube server URL</string>
+    <string name="home_server_hint">Leave blank to use the currently selected server.</string>
+    <string name="home_channel_address">Channel URL or channel@server</string>
+    <string name="home_source_check_save">Check and save</string>
+    <string name="home_source_saved">Source checked and saved.</string>
+    <string name="home_source_invalid">Could not check this source. Check its address and connection.</string>
+    <string name="home_source_empty">No videos were found for this Home source.</string>
+    <string name="home_interest_music">Music</string>
+    <string name="home_interest_films">Films</string>
+    <string name="home_interest_vehicles">Vehicles</string>
+    <string name="home_interest_art">Art</string>
+    <string name="home_interest_sports">Sports</string>
+    <string name="home_interest_travel">Travel</string>
+    <string name="home_interest_gaming">Gaming</string>
+    <string name="home_interest_people">People</string>
+    <string name="home_interest_comedy">Comedy</string>
+    <string name="home_interest_entertainment">Entertainment</string>
+    <string name="home_interest_news">News</string>
+    <string name="home_interest_howto">How-to</string>
+    <string name="home_interest_education">Education</string>
+    <string name="home_interest_activism">Activism</string>
+    <string name="home_interest_science">Science</string>
+    <string name="home_interest_animals">Animals</string>
+    <string name="home_interest_kids">Kids</string>
+    <string name="home_interest_food">Food</string>
+    <string name="home_interest_nature">Nature</string>
+</resources>

@@ -83,6 +83,7 @@
     <string name="subtitle_translation_no_source">Choose a subtitle track with a known language first.</string>
     <string name="subtitle_translation_same_language">The selected subtitle already uses this language.</string>
     <string name="subtitle_translation_failed">Subtitle translation failed.</string>
+    <string name="subtitle_translation_model_error">The translation engine failed while opening a language model. In Settings → Language and Country → Translation, remove and download the subtitle language and target language models again.</string>
     <string name="subtitle_translation_hint">Translation runs on this device. The first use downloads language model files (about 30 MB per language).</string>
     <string name="subtitle_models_title">Translation language models</string>
     <string name="subtitle_model_choose">Language to download</string>
