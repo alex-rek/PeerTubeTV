@@ -105,12 +105,12 @@ internal suspend fun <T> runCatchingCancellable(block: suspend () -> T): Result<
 }
 
 interface PeerTubeApi {
-    @GET("api/v1/videos") suspend fun videos(@Query("sort") sort: String = "-publishedAt", @Query("count") count: Int = 30, @Query("search") search: String? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("categoryOneOf") categoryOneOf: List<Int>? = null, @Query("isLocal") isLocal: Boolean? = null, @Query("nsfw") nsfw: String? = null): VideoPage
+    @GET("api/v1/videos") suspend fun videos(@Query("sort") sort: String = "-publishedAt", @Query("count") count: Int = 30, @Query("search") search: String? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("categoryOneOf") categoryOneOf: List<Int>? = null, @Query("isLocal") isLocal: Boolean? = null, @Query("nsfw") nsfw: String? = null, @Query("start") start: Int = 0): VideoPage
     @GET("api/v1/search/videos") suspend fun searchVideos(@Query("search") search: String, @Query("start") start: Int = 0, @Query("count") count: Int = 40, @Query("sort") sort: String? = "-match", @Query("nsfw") nsfw: String? = null): VideoPage
     @GET("api/v1/server/following") suspend fun serverFollowing(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/server/followers") suspend fun serverFollowers(@Query("start") start: Int = 0, @Query("count") count: Int = 20): com.google.gson.JsonObject
     @GET("api/v1/video-channels") suspend fun videoChannels(@Query("start") start: Int = 0, @Query("count") count: Int = 100): PeerTubeChannelPage
-    @GET("api/v1/video-channels/{handle}/videos") suspend fun channelVideos(@Path(value = "handle", encoded = true) handle: String, @Query("count") count: Int = 100): VideoPage
+    @GET("api/v1/video-channels/{handle}/videos") suspend fun channelVideos(@Path(value = "handle", encoded = true) handle: String, @Query("count") count: Int = 100, @Query("start") start: Int = 0): VideoPage
     @GET("api/v1/videos/{id}") suspend fun video(@Path("id") id: String): Video
     @GET("api/v1/videos/{id}/live-session") suspend fun liveSession(@Path("id") id: String): LiveVideoSession
     @GET("api/v1/videos/{id}/captions") suspend fun captions(@Path("id") id: String): CaptionPage

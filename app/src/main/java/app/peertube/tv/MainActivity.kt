@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -59,6 +60,7 @@ import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -100,6 +102,8 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -297,6 +301,8 @@ class HomeModel : ViewModel() {
     var recommendations by mutableStateOf<List<Video>>(emptyList())
     var homePageVideos by mutableStateOf<List<Video>>(emptyList())
     var isLoadingHomePage by mutableStateOf(false)
+    var isLoadingMoreHomePage by mutableStateOf(false)
+    var homePageHasMore by mutableStateOf(false)
     var homePageError by mutableStateOf<String?>(null)
     var homePageDisplayMode by mutableStateOf("recommended")
         private set
@@ -309,6 +315,8 @@ class HomeModel : ViewModel() {
     var homePageConfigStatus by mutableStateOf<String?>(null)
         private set
     private var homePageRequestId = 0
+    private var homePageNextStart = 0
+    private val homePagePageSize = 30
     var subscriptionVideos by mutableStateOf<List<Video>>(emptyList())
     var channelVideos by mutableStateOf<List<Video>>(emptyList())
     var activeChannelTitle by mutableStateOf("")
@@ -735,6 +743,8 @@ class HomeModel : ViewModel() {
         if (homePageDisplayMode == "recommended") {
             homePageVideos = emptyList()
             homePageError = null
+            homePageHasMore = false
+            homePageNextStart = 0
             load()
             return
         }
@@ -746,27 +756,34 @@ class HomeModel : ViewModel() {
         val sourceChannel = homePageChannel
         viewModelScope.launch {
             isLoadingHomePage = true
+            isLoadingMoreHomePage = false
+            homePageVideos = emptyList()
+            homePageHasMore = false
+            homePageNextStart = 0
             homePageError = null
             try {
-                val videos = when (mode) {
+                val page = when (mode) {
                     "interests" -> {
                         require(interests.isNotEmpty()) { appContext?.getString(R.string.home_interests_empty).orEmpty() }
-                        ApiFactory.create(requestedServer).videos(categoryOneOf = interests.sorted(), nsfw = "false").data
+                        ApiFactory.create(requestedServer).videos(count = homePagePageSize, categoryOneOf = interests.sorted(), nsfw = "false", start = 0)
                     }
                     "server" -> {
                         val origin = accountServerOrigin(sourceServer.ifBlank { requestedServer })
-                        ApiFactory.create(origin).videos(isLocal = true, nsfw = "false").data
+                        ApiFactory.create(origin).videos(count = homePagePageSize, isLocal = true, nsfw = "false", start = 0)
                     }
                     "channel" -> {
                         val channel = parseHomeChannelAddress(sourceChannel)
-                        ApiFactory.create(channel.origin).channelVideos(channel.handle)
-                            .data.filterNot { it.nsfw }.map { it.copy(host = it.host ?: channel.host) }
+                        ApiFactory.create(channel.origin).channelVideos(channel.handle, count = homePagePageSize, start = 0).let { response ->
+                            response.copy(data = response.data.filterNot { it.nsfw }.map { it.copy(host = it.host ?: channel.host) })
+                        }
                     }
-                    else -> emptyList()
+                    else -> VideoPage()
                 }
                 if (requestId == homePageRequestId && requestedServer == server && mode == homePageDisplayMode) {
-                    homePageVideos = videos
-                    homePageError = if (videos.isEmpty()) appContext?.getString(R.string.home_source_empty) else null
+                    homePageVideos = page.data
+                    homePageNextStart = minOf(homePagePageSize, page.total)
+                    homePageHasMore = page.data.isNotEmpty() && homePageNextStart < page.total
+                    homePageError = if (page.data.isEmpty()) appContext?.getString(R.string.home_source_empty) else null
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -777,6 +794,46 @@ class HomeModel : ViewModel() {
                 }
             } finally {
                 if (requestId == homePageRequestId) isLoadingHomePage = false
+            }
+        }
+    }
+    fun loadMoreHomePage() {
+        if (homePageDisplayMode == "recommended" || isLoadingHomePage || isLoadingMoreHomePage || !homePageHasMore) return
+        val requestId = homePageRequestId
+        val requestedServer = server
+        val mode = homePageDisplayMode
+        val interests = homePageInterests
+        val sourceServer = homePageServer
+        val sourceChannel = homePageChannel
+        val start = homePageNextStart
+        viewModelScope.launch {
+            isLoadingMoreHomePage = true
+            try {
+                val page = when (mode) {
+                    "interests" -> ApiFactory.create(requestedServer).videos(count = homePagePageSize, categoryOneOf = interests.sorted(), nsfw = "false", start = start)
+                    "server" -> ApiFactory.create(accountServerOrigin(sourceServer.ifBlank { requestedServer })).videos(count = homePagePageSize, isLocal = true, nsfw = "false", start = start)
+                    "channel" -> {
+                        val channel = parseHomeChannelAddress(sourceChannel)
+                        ApiFactory.create(channel.origin).channelVideos(channel.handle, count = homePagePageSize, start = start).let { response ->
+                            response.copy(data = response.data.filterNot { it.nsfw }.map { it.copy(host = it.host ?: channel.host) })
+                        }
+                    }
+                    else -> VideoPage()
+                }
+                if (requestId == homePageRequestId && requestedServer == server && mode == homePageDisplayMode) {
+                    homePageVideos = (homePageVideos + page.data).distinctBy { it.uuid }
+                    homePageNextStart = minOf(start + homePagePageSize, page.total)
+                    homePageHasMore = page.data.isNotEmpty() && homePageNextStart < page.total
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (requestId == homePageRequestId) {
+                    homePageHasMore = false
+                    homePageError = error.localizedMessage ?: appContext?.getString(R.string.error_request)
+                }
+            } finally {
+                isLoadingMoreHomePage = false
             }
         }
     }
@@ -1763,7 +1820,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             returnSearchFocusPending = false
         }
     }
-    LaunchedEffect(menuExpanded, sectionFocusPending, m.tab, m.videos.size, m.recommendations.size, m.popularVideos.size, m.liveVideos.size, m.subscriptionVideos.size, m.instances.size) {
+    LaunchedEffect(menuExpanded, sectionFocusPending, m.tab, m.videos.size, m.homePageVideos.size, m.recommendations.size, m.popularVideos.size, m.liveVideos.size, m.subscriptionVideos.size, m.instances.size) {
         if (!menuExpanded && sectionFocusPending) {
             kotlinx.coroutines.delay(100)
             val target = when (m.tab) {
@@ -2435,8 +2492,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     "channel" -> R.string.home_mode_channel
                     else -> R.string.home_mode_recommended
                 })
-                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                    if (m.homePageDisplayMode == "recommended") {
+                if (m.homePageDisplayMode == "recommended") {
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
                     if (m.recommendations.isNotEmpty()) {
                         item {
                             VideoShelf(
@@ -2484,31 +2541,70 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             onMarkWatched = m::markRecommendationWatched
                         )
                     }
-                    } else {
-                        if (m.isLoadingHomePage) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-                        if (!m.homePageError.isNullOrBlank()) item { Text(m.homePageError.orEmpty(), color = if (m.homePageVideos.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
-                        if (m.homePageVideos.isNotEmpty()) {
-                            item {
-                                VideoShelf(
-                                    title = customHomeTitle,
-                                    videos = m.sortVideos(m.homePageVideos),
+                    }
+                } else {
+                    val sortedHomePageVideos = remember(m.homePageVideos, m.videoSortMode) { m.sortVideos(m.homePageVideos) }
+                    val homeGridState = rememberLazyGridState()
+                    BoxWithConstraints(Modifier.weight(1f)) {
+                        val spacing = 14.dp
+                        val minCardWidth = (240.dp * m.gridScale).coerceIn(180.dp, 360.dp)
+                        val columns = ((maxWidth + spacing) / (minCardWidth + spacing)).toInt().coerceAtLeast(1)
+                        LaunchedEffect(homeGridState, columns, m.tab, m.homePageDisplayMode) {
+                            if (m.tab == "home" && m.homePageDisplayMode != "recommended") {
+                                snapshotFlow {
+                                    val layout = homeGridState.layoutInfo
+                                    val lastVisible = layout.visibleItemsInfo.lastOrNull()?.index ?: -1
+                                    lastVisible >= layout.totalItemsCount - columns - 5
+                                }.distinctUntilChanged().collect { nearEnd ->
+                                    if (nearEnd) m.loadMoreHomePage()
+                                }
+                            }
+                        }
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(columns),
+                            state = homeGridState,
+                            contentPadding = PaddingValues(bottom = 24.dp),
+                            horizontalArrangement = Arrangement.spacedBy(spacing),
+                            verticalArrangement = Arrangement.spacedBy(spacing)
+                        ) {
+                            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                Text(customHomeTitle, style = MaterialTheme.typography.headlineSmall)
+                            }
+                            if (m.isLoadingHomePage) {
+                                item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                                }
+                            }
+                            if (!m.homePageError.isNullOrBlank()) {
+                                item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                    Text(m.homePageError.orEmpty(), color = if (m.homePageVideos.isEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            itemsIndexed(sortedHomePageVideos, key = { _, video -> video.uuid }) { index, video ->
+                                VideoGridCard(
+                                    video = video,
                                     server = m.server,
-                                    watchProgressMs = m.watchProgressMs,
-                                    tickerSpeed = m.tickerSpeed,
-                                    firstCardFocusRequester = homeFirstCardFocusRequester,
-                                    upFocusRequester = searchButtonFocusRequester,
+                                    progress = m.watchProgressFraction(video),
+                                    favorite = video.uuid in m.favoriteIds,
+                                    subscribed = m.isSubscribed(video),
                                     titleLines = m.videoTitleLines,
-                                    onOpen = { video -> openVideoInQueue(video, m.homePageVideos) },
-                                    isFavorite = { video -> video.uuid in m.favoriteIds },
-                                    isSubscribed = m::isSubscribed,
-                                    onFavorite = toggleFavorite,
-                                    onSubscription = m::toggleSubscription,
-                                    onChannel = openChannelVideos,
+                                    tickerSpeed = m.tickerSpeed,
+                                    onOpen = { openVideoInQueue(video, sortedHomePageVideos) },
+                                    onFavorite = { toggleFavorite(video) },
+                                    onSubscription = { m.toggleSubscription(video) },
+                                    onChannel = { openChannelVideos(video) },
                                     setContextMenuTarget = updateFocusedVideoMenu,
-                                    contextMenuHoldSeconds = m.contextMenuHoldSeconds,
-                                    onExcludeRecommendation = m::excludeFromRecommendations,
-                                    onMarkWatched = m::markRecommendationWatched
+                                    holdSeconds = m.contextMenuHoldSeconds,
+                                    onExcludeRecommendation = { m.excludeFromRecommendations(video) },
+                                    onMarkWatched = { m.markRecommendationWatched(video) },
+                                    firstCardFocusRequester = if (index == 0) homeFirstCardFocusRequester else null,
+                                    upFocusRequester = if (index < columns) searchButtonFocusRequester else null
                                 )
+                            }
+                            if (m.isLoadingMoreHomePage) {
+                                item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 8.dp))
+                                }
                             }
                         }
                     }
