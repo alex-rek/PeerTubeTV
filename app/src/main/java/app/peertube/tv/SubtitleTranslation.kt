@@ -89,6 +89,18 @@ fun deleteTranslationLanguage(language: String, onResult: (Result<Unit>) -> Unit
     }
 }
 
+fun translationModelErrorMessage(context: Context, error: Throwable): String {
+    val causeChain = generateSequence(error) { it.cause }.take(8).toList()
+    val modelRuntimeFailure = causeChain.any {
+        it is NullPointerException || it.localizedMessage?.let { message ->
+            message.contains("Attempt to read from field", ignoreCase = true) ||
+                message.contains("Attempt to invoke virtual method", ignoreCase = true)
+        } == true
+    }
+    return if (modelRuntimeFailure) context.getString(R.string.subtitle_translation_model_error)
+    else error.localizedMessage ?: error.javaClass.simpleName
+}
+
 fun interfaceSubtitleLanguage(uiLanguage: String): String {
     val language = uiLanguage.takeIf { it.isNotBlank() && it != "auto" }?.substringBefore('-')
         ?: run {

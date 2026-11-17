@@ -14,7 +14,7 @@ if (hasAnyReleaseSigningValue && !hasAllReleaseSigningValues) {
 android {
     namespace = "app.peertube.tv"
     compileSdk = 37
-    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 35; versionCode = 19; versionName = "1.0.19" }
+    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 35; versionCode = 20; versionName = "1.0.20" }
     buildFeatures {
         compose = true
         buildConfig = true

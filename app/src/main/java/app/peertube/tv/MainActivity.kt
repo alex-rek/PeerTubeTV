@@ -2879,7 +2879,7 @@ private fun SettingsDashboard(
     LaunchedEffect(settingsContext) {
         refreshDownloadedTranslationLanguages { result ->
             result.onSuccess { downloadedTranslationLanguages = it }
-                .onFailure { translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName }
+                .onFailure { translationModelStatus = translationModelErrorMessage(settingsContext, it) }
         }
     }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
@@ -2995,7 +2995,7 @@ private fun SettingsDashboard(
                                                     downloadedTranslationLanguages = downloadedTranslationLanguages + selectedModelLanguage
                                                     translationModelStatus = settingsContext.getString(R.string.subtitle_model_downloaded)
                                                 }.onFailure {
-                                                    translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName
+                                                    translationModelStatus = translationModelErrorMessage(settingsContext, it)
                                                 }
                                             }
                                         },
@@ -3023,7 +3023,7 @@ private fun SettingsDashboard(
                                                             downloadedTranslationLanguages = downloadedTranslationLanguages - code
                                                             translationModelStatus = settingsContext.getString(R.string.subtitle_model_removed)
                                                         }.onFailure {
-                                                            translationModelStatus = it.localizedMessage ?: it.javaClass.simpleName
+                                                            translationModelStatus = translationModelErrorMessage(settingsContext, it)
                                                         }
                                                     }
                                                 }

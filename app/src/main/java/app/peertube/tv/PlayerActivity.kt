@@ -21,6 +21,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Forward10
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
@@ -349,8 +362,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             .onSuccess { isSubscribed = it }
     }
     val controlActions = buildList {
-        addAll(0..4)
-        add(5)
+        addAll(listOf(3, 4, 0, 1, 2))
+        if (subtitles.isNotEmpty()) add(5)
         if (!channelName.isNullOrBlank()) add(6)
         if (!uuid.isNullOrBlank()) add(7)
         add(8)
@@ -796,12 +809,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 if (error is CancellationException) throw error
                 subtitleTranslationEnabled = false
                 translationPreparing = false
-                val causeChain = generateSequence(error) { it.cause }.take(6).toList()
-                val modelRuntimeFailure = causeChain.any {
-                    it is NullPointerException || it.localizedMessage?.contains("Attempt to read from field", ignoreCase = true) == true
-                }
-                translationError = if (modelRuntimeFailure) context.getString(R.string.subtitle_translation_model_error)
-                    else error.localizedMessage ?: context.getString(R.string.subtitle_translation_failed)
+                translationError = translationModelErrorMessage(context, error)
                 translatedCues.clear()
                 sourceSubtitleCues.clear()
                 if (selectedSubtitleIndex >= 0) selectSubtitle(selectedSubtitleIndex)
@@ -1141,7 +1149,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 Modifier.align(androidx.compose.ui.Alignment.BottomStart)
                     .fillMaxWidth()
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xEE000000))))
-                    .padding(horizontal = 42.dp, vertical = 24.dp),
+                    .padding(horizontal = 28.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 TranslatedVideoMetadataText(title, style = MaterialTheme.typography.headlineMedium, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1152,27 +1160,26 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 }.joinToString(" · ")
                 Text(metadata, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = .88f), maxLines = 1, overflow = TextOverflow.Ellipsis)
 
-                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    PlayerControl("↶", "Seek backward ${seekStepSeconds} seconds", stringResource(R.string.player_control_caption_back), selected = focusedControlIndex == controlActions.indexOf(0)) { activateControl(0) }
-                    PlayerControl(if (playbackActive) "Ⅱ" else "▶", if (playbackActive) "Pause" else "Play", stringResource(R.string.player_control_caption_play_pause), large = true, selected = focusedControlIndex == controlActions.indexOf(1)) { activateControl(1) }
-                    PlayerControl("↷", "Seek forward ${seekStepSeconds} seconds", stringResource(R.string.player_control_caption_forward), selected = focusedControlIndex == controlActions.indexOf(2)) { activateControl(2) }
-                    PlayerControl("↻${if (repeatVideo) "✓" else ""}", "Repeat", stringResource(R.string.player_control_caption_repeat), selected = focusedControlIndex == controlActions.indexOf(3)) { activateControl(3) }
-                    PlayerControl("${playbackSpeed}×", "Playback speed", stringResource(R.string.player_control_caption_speed), selected = focusedControlIndex == controlActions.indexOf(4)) { activateControl(4) }
-                    PlayerControl("CC", "Subtitles", stringResource(R.string.player_control_caption_subtitles), selected = focusedControlIndex == controlActions.indexOf(5)) { activateControl(5) }
-                    if (!channelName.isNullOrBlank()) PlayerControl(if (isSubscribed) "✓" else "＋", "Subscribe", stringResource(R.string.player_control_caption_subscribe), selected = focusedControlIndex == controlActions.indexOf(6)) { activateControl(6) }
-                    if (!uuid.isNullOrBlank()) PlayerControl(if (isFavorite) "♥✓" else "♥", "Favorite", stringResource(R.string.player_control_caption_favorite), selected = focusedControlIndex == controlActions.indexOf(7)) { activateControl(7) }
-                    PlayerControl("HQ", "Playback quality settings", stringResource(R.string.player_control_caption_quality), selected = focusedControlIndex == controlActions.indexOf(8)) { activateControl(8) }
-                    if (!uuid.isNullOrBlank()) PlayerControl("ⓘ", "Video information", stringResource(R.string.player_control_caption_info), selected = focusedControlIndex == controlActions.indexOf(9)) { activateControl(9) }
-                    if (!uuid.isNullOrBlank()) PlayerIconControl(Icons.Outlined.ChatBubbleOutline, "Comments", stringResource(R.string.player_control_caption_comments), selected = focusedControlIndex == controlActions.indexOf(10)) { activateControl(10) }
-                }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     Text(formatPlayerTime(playerPosition), color = Color.White, fontSize = 12.sp)
-                    Spacer(Modifier.weight(1f))
+                    val duration = player.duration.takeIf { it > 0L } ?: 1L
+                    Slider(value = (playerPosition.toFloat() / duration).coerceIn(0f, 1f), onValueChange = { playerPosition = (it * duration).toLong(); showControls() }, onValueChangeFinished = { player.seekTo(playerPosition) }, modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                        .then(if (progressFocused) Modifier.background(Color(0x4475D5FF), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(horizontal = 8.dp) else Modifier))
                     Text(formatPlayerTime(player.duration), color = Color.White, fontSize = 12.sp)
                 }
-                val duration = player.duration.takeIf { it > 0L } ?: 1L
-                Slider(value = (playerPosition.toFloat() / duration).coerceIn(0f, 1f), onValueChange = { playerPosition = (it * duration).toLong(); showControls() }, onValueChangeFinished = { player.seekTo(playerPosition) }, modifier = Modifier.fillMaxWidth()
-                    .then(if (progressFocused) Modifier.background(Color(0x4475D5FF), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(horizontal = 8.dp) else Modifier))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    PlayerIconControl(Icons.Filled.Repeat, "Repeat video", stringResource(R.string.player_control_caption_repeat), selected = focusedControlIndex == controlActions.indexOf(3), modifier = Modifier.weight(1f)) { activateControl(3) }
+                    PlayerLabelControl("${playbackSpeed}×", "Playback speed", stringResource(R.string.player_control_caption_speed), selected = focusedControlIndex == controlActions.indexOf(4), modifier = Modifier.weight(1f)) { activateControl(4) }
+                    PlayerIconControl(Icons.Filled.Replay10, "Seek backward ${seekStepSeconds} seconds", stringResource(R.string.player_control_caption_back), selected = focusedControlIndex == controlActions.indexOf(0), modifier = Modifier.weight(1f)) { activateControl(0) }
+                    PlayerIconControl(if (playbackActive) Icons.Filled.Pause else Icons.Filled.PlayArrow, if (playbackActive) "Pause" else "Play", stringResource(R.string.player_control_caption_play_pause), selected = focusedControlIndex == controlActions.indexOf(1), modifier = Modifier.weight(1f), large = true) { activateControl(1) }
+                    PlayerIconControl(Icons.Filled.Forward10, "Seek forward ${seekStepSeconds} seconds", stringResource(R.string.player_control_caption_forward), selected = focusedControlIndex == controlActions.indexOf(2), modifier = Modifier.weight(1f)) { activateControl(2) }
+                    if (subtitles.isNotEmpty()) PlayerIconControl(Icons.Filled.ClosedCaption, "Subtitles", stringResource(R.string.player_control_caption_subtitles), selected = focusedControlIndex == controlActions.indexOf(5), modifier = Modifier.weight(1f)) { activateControl(5) }
+                    if (!channelName.isNullOrBlank()) PlayerIconControl(if (isSubscribed) Icons.Filled.Check else Icons.Filled.PersonAdd, "Subscribe", stringResource(R.string.player_control_caption_subscribe), selected = focusedControlIndex == controlActions.indexOf(6), modifier = Modifier.weight(1f)) { activateControl(6) }
+                    if (!uuid.isNullOrBlank()) PlayerIconControl(if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorite", stringResource(R.string.player_control_caption_favorite), selected = focusedControlIndex == controlActions.indexOf(7), modifier = Modifier.weight(1f)) { activateControl(7) }
+                    PlayerIconControl(Icons.Filled.HighQuality, "Playback quality settings", stringResource(R.string.player_control_caption_quality), selected = focusedControlIndex == controlActions.indexOf(8), modifier = Modifier.weight(1f)) { activateControl(8) }
+                    if (!uuid.isNullOrBlank()) PlayerIconControl(Icons.Filled.Info, "Video information", stringResource(R.string.player_control_caption_info), selected = focusedControlIndex == controlActions.indexOf(9), modifier = Modifier.weight(1f)) { activateControl(9) }
+                    if (!uuid.isNullOrBlank()) PlayerIconControl(Icons.Outlined.ChatBubbleOutline, "Comments", stringResource(R.string.player_control_caption_comments), selected = focusedControlIndex == controlActions.indexOf(10), modifier = Modifier.weight(1f)) { activateControl(10) }
+                }
             }
         }
         if (qualityPanelOpen) {
@@ -1325,23 +1332,23 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 }
 
-@Composable private fun PlayerControl(label: String, description: String, caption: String, large: Boolean = false, selected: Boolean = false, onClick: () -> Unit) {
-    Column(Modifier.width(64.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp), modifier = Modifier.width(if (large) 54.dp else 48.dp).height(48.dp)
-            .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+@Composable private fun PlayerIconControl(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, caption: String, selected: Boolean = false, modifier: Modifier = Modifier, large: Boolean = false, onClick: () -> Unit) {
+    Column(modifier, horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        IconButton(onClick = onClick, modifier = Modifier.size(if (large) 54.dp else 48.dp)
+            .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(12.dp))
             .semantics { contentDescription = description }) {
-            Text(label, color = Color.White, fontSize = if (large) 26.sp else if (label == "CC") 15.sp else 20.sp, maxLines = 1, softWrap = false)
+            Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(if (large) 30.dp else 23.dp))
         }
         Text(caption, color = Color.White.copy(alpha = .88f), fontSize = 10.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
 
-@Composable private fun PlayerIconControl(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, caption: String, selected: Boolean = false, onClick: () -> Unit) {
-    Column(Modifier.width(64.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-        IconButton(onClick = onClick, modifier = Modifier.size(48.dp)
+@Composable private fun PlayerLabelControl(label: String, description: String, caption: String, selected: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Column(modifier, horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+        TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(48.dp)
             .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(12.dp))
             .semantics { contentDescription = description }) {
-            Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(21.dp))
+            Text(label, color = Color.White, fontSize = 20.sp, maxLines = 1, softWrap = false)
         }
         Text(caption, color = Color.White.copy(alpha = .88f), fontSize = 10.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }

@@ -95,7 +95,7 @@
     <string name="subtitle_models_none">Загруженных моделей нет.</string>
     <string name="subtitle_models_all_downloaded">Все поддерживаемые языковые модели уже загружены.</string>
     <string name="subtitle_translation_failed">Не удалось перевести субтитры.</string>
-    <string name="subtitle_translation_model_error">Сбой движка перевода при открытии языковой модели. В настройках «Язык и Страна» → «Перевод» удалите и заново загрузите модель языка субтитров и целевого языка.</string>
+    <string name="subtitle_translation_model_error">Не удалось запустить движок перевода. Перезапустите приложение и повторите загрузку модели. Если ошибка повторится, обновите Google Play services и проверьте подключение к интернету.</string>
     <string name="subtitle_translation_hint">Перевод выполняется на устройстве. При первом использовании загружаются языковые модели (около 30 МБ на язык).</string>
     <string name="player_comments">Комментарии</string>
     <string name="player_comments_loading">Загрузка комментариев…</string>
