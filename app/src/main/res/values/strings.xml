@@ -154,4 +154,10 @@
     <string name="account_error_response">The server returned an invalid response.</string>
     <string name="account_error_limit">You can save up to 20 accounts.</string>
     <string name="account_error_network">Could not connect to the PeerTube server.</string>
+    <string name="settings_subtitles">Subtitles</string>
+    <string name="subtitle_background_enabled">Subtitle text background</string>
+    <string name="subtitle_background_opacity">Background opacity</string>
+    <string name="update_check_action">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_no_new_version">PeerIcheTV is up to date.</string>
 </resources>

@@ -6,7 +6,7 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerIcheTV — независимый проект, не связанный с SmartTube.
 
-[Скачать последнюю версию APK](https://github.com/alex-rek/PeerTubeTV/releases/latest) · [English](README.md)
+[Скачать последнюю версию APK](https://github.com/alex-rek/PeerIcheTV/releases/latest) · [English](README.md)
 
 ## Возможности
 
@@ -28,7 +28,7 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 ## Скачать и установить
 
-Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerTubeTV/releases/latest) и установите на Android TV или планшет. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
+Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerIcheTV/releases/latest) и установите на Android TV или планшет. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
 
 ## Сборка из исходного кода
 

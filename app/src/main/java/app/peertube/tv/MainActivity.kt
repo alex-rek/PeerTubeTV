@@ -49,6 +49,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
@@ -214,6 +215,22 @@ class MainActivity : AppCompatActivity() {
             }.onFailure { error ->
                 updateMessage = getString(R.string.update_error_download, error.localizedMessage ?: getString(R.string.update_network_error))
             }
+        }
+    }
+
+    internal fun checkForUpdates() {
+        if (updateBusy) return
+        android.widget.Toast.makeText(this, getString(R.string.update_checking), android.widget.Toast.LENGTH_SHORT).show()
+        lifecycleScope.launch {
+            val result = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { GitHubUpdates.latestRelease(this@MainActivity, BuildConfig.VERSION_NAME, includeCurrent = true) }
+            }
+            result.onFailure { updateMessage = getString(R.string.update_network_error) }
+                .onSuccess { release ->
+                    if (release == null) updateMessage = getString(R.string.update_network_error)
+                    else if (GitHubUpdates.compareVersions(release.version, BuildConfig.VERSION_NAME) > 0) { updateMessage = null; availableUpdate = release }
+                    else { updateMessage = null; android.widget.Toast.makeText(this@MainActivity, getString(R.string.update_no_new_version), android.widget.Toast.LENGTH_LONG).show() }
+                }
         }
     }
 
@@ -2105,12 +2122,12 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
       ) {
         if (menuExpanded) {
             Surface(
-                modifier = Modifier.width(230.dp).fillMaxHeight(),
+                modifier = Modifier.width(206.dp).fillMaxHeight(),
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 shape = RoundedCornerShape(0.dp)
             ) {
               Column(Modifier.fillMaxSize().focusGroup().verticalScroll(rememberScrollState())) {
-                Spacer(Modifier.height(64.dp))
+                Spacer(Modifier.height(48.dp))
                 listOf("home" to R.string.nav_home, "popular" to R.string.nav_popular, "recommendations" to R.string.nav_recommendations, "live" to R.string.nav_live, "subscriptions" to R.string.nav_subscriptions, "channels" to R.string.nav_channels, "instances" to R.string.nav_instances, "history" to R.string.nav_history, "favorites" to R.string.nav_favorites, "settings" to R.string.nav_settings).filter { (key, _) -> key == "home" || key == "settings" || key !in m.hiddenSections }.forEach { (key, label) ->
                     val isSelected = if (key == "settings") (m.tab == "settings" || settingsOverlay) else m.tab == key
                     val selectedStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = if (isSelected) 20.sp else 16.sp, fontWeight = if (isSelected) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal)
@@ -2127,7 +2144,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         "favorites" -> Icons.Filled.Favorite
                         else -> Icons.Filled.Settings
                     }
-                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = MaterialTheme.colorScheme.onSurface, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
+                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle.copy(fontSize = if (isSelected) 18.sp else 15.sp), color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp)) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = MaterialTheme.colorScheme.onSurface, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().height(38.dp).scale(if (navFocused) 1.06f else 1f).onFocusChanged {
                         navFocused = it.isFocused
                         if (it.isFocused) {
                             focusedMenuSectionKey = key
@@ -2147,8 +2164,35 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 }
               }
             }
+        } else {
+            val railItems = listOf("home" to R.string.nav_home, "popular" to R.string.nav_popular, "recommendations" to R.string.nav_recommendations, "live" to R.string.nav_live, "subscriptions" to R.string.nav_subscriptions, "channels" to R.string.nav_channels, "instances" to R.string.nav_instances, "history" to R.string.nav_history, "favorites" to R.string.nav_favorites, "settings" to R.string.nav_settings).filter { (key, _) -> key == "home" || key == "settings" || key !in m.hiddenSections }
+            Surface(Modifier.width(60.dp).fillMaxHeight(), color = MaterialTheme.colorScheme.surfaceVariant) {
+                Column(Modifier.fillMaxSize().padding(top = 42.dp).focusGroup(), verticalArrangement = Arrangement.spacedBy(2.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    railItems.forEach { (key, label) ->
+                        val isSelected = if (key == "settings") (m.tab == "settings" || settingsOverlay) else m.tab == key
+                        val icon = when (key) {
+                            "home" -> Icons.Filled.Home
+                            "popular" -> Icons.Filled.Whatshot
+                            "live" -> Icons.Filled.LiveTv
+                            "subscriptions" -> Icons.Filled.Subscriptions
+                            "channels" -> Icons.Filled.VideoLibrary
+                            "recommendations" -> Icons.Filled.Recommend
+                            "instances" -> Icons.Filled.Public
+                            "history" -> Icons.Filled.History
+                            "favorites" -> Icons.Filled.Favorite
+                            else -> Icons.Filled.Settings
+                        }
+                        var railFocused by remember(key) { mutableStateOf(false) }
+                        IconButton(onClick = { navigateToSection(key, false) }, modifier = Modifier.size(44.dp)
+                            .onFocusChanged { railFocused = it.isFocused; if (it.isFocused) focusedMenuSectionKey = key }
+                            .background(if (isSelected || railFocused) MaterialTheme.colorScheme.primary.copy(alpha = if (railFocused) .24f else .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
+                            Icon(icon, contentDescription = stringResource(label), tint = if (isSelected || railFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+                        }
+                    }
+                }
+            }
         }
-        Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
+        Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
                 if (m.showSearchIcon) {
                 IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, MaterialTheme.colorScheme.secondary, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
@@ -2472,7 +2516,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     onClearHistory = { clearHistoryDialog = true },
                     onClearHistoryPeriod = { clearHistoryPeriodDialog = true },
                     onExportBackup = exportBackup,
-                    onImportBackup = launchBackupRestore
+                    onImportBackup = launchBackupRestore,
+                    onCheckForUpdates = { (context as? MainActivity)?.checkForUpdates() }
                 )
             } else if (m.tab == "home") {
                 val customHomeTitle = stringResource(when (m.homePageDisplayMode) {
@@ -2688,7 +2733,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             onClearHistory = { clearHistoryDialog = true },
                             onClearHistoryPeriod = { clearHistoryPeriodDialog = true },
                             onExportBackup = exportBackup,
-                            onImportBackup = launchBackupRestore
+                            onImportBackup = launchBackupRestore,
+                            onCheckForUpdates = { (context as? MainActivity)?.checkForUpdates() }
                         )
                     }
                 }
@@ -2831,7 +2877,8 @@ private fun SettingsDashboard(
     onClearHistory: () -> Unit,
     onClearHistoryPeriod: () -> Unit,
     onExportBackup: () -> Unit,
-    onImportBackup: () -> Unit
+    onImportBackup: () -> Unit,
+    onCheckForUpdates: () -> Unit
 ) {
     val firstSettingsCardFocus = firstFocusRequester ?: remember { FocusRequester() }
     LaunchedEffect(selectedCategory, requestInitialFocus) {
@@ -2853,6 +2900,8 @@ private fun SettingsDashboard(
     var subtitleOffset by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleBottomOffset", 0.20f).coerceIn(0.02f, 0.50f)) }
     var subtitleHorizontal by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleHorizontalPosition", 0.50f).coerceIn(0.05f, 0.95f)) }
     var subtitleColor by remember { mutableStateOf(playerPrefs.getString("subtitleColor", if (playerPrefs.getString("subtitleStyle", "default") == "yellow") "yellow" else "white") ?: "white") }
+    var subtitleBackgroundEnabled by remember { mutableStateOf(playerPrefs.getBoolean("subtitleBackgroundEnabled", false)) }
+    var subtitleBackgroundOpacity by remember { mutableFloatStateOf(playerPrefs.getFloat("subtitleBackgroundOpacity", 0.65f).coerceIn(0.15f, 0.90f)) }
     var subtitlesDefault by remember { mutableStateOf(playerPrefs.getBoolean("subtitlesEnabledByDefault", false)) }
     var videoMetadataTranslationEnabled by remember(playerPrefs) { mutableStateOf(playerPrefs.getBoolean("translateVideoMetadataEnabled", false)) }
     var subtitleTranslationDefault by remember(playerPrefs) { mutableStateOf(playerPrefs.getBoolean("subtitleTranslationEnabledByDefault", false)) }
@@ -2873,10 +2922,11 @@ private fun SettingsDashboard(
     }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
     val categories = listOf(
+        "interface" to R.string.settings_interface,
         "accounts" to R.string.settings_accounts,
         "language" to R.string.settings_language_country,
         "general" to R.string.settings_general,
-        "interface" to R.string.settings_interface,
+        "subtitles" to R.string.settings_subtitles,
         "player" to R.string.settings_player,
         "search" to R.string.settings_search,
         "network" to R.string.settings_network,
@@ -2915,6 +2965,7 @@ private fun SettingsDashboard(
                         Column(Modifier.fillMaxSize().padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.SpaceBetween) {
                             when (key) {
                                 "accounts" -> Icon(Icons.Filled.AccountCircle, contentDescription = null, modifier = Modifier.size(54.dp))
+                                "subtitles" -> Icon(Icons.Filled.ClosedCaption, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "language" -> Icon(Icons.Filled.Public, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "general" -> Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "interface" -> Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(54.dp))
@@ -2924,7 +2975,7 @@ private fun SettingsDashboard(
                                 "backup" -> Icon(Icons.Filled.CloudUpload, contentDescription = null, modifier = Modifier.size(54.dp))
                                 else -> Text("i", style = MaterialTheme.typography.displaySmall)
                             }
-                            Text(stringResource(title), style = MaterialTheme.typography.titleSmall, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            Text(stringResource(title), style = MaterialTheme.typography.titleMedium, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -3067,9 +3118,18 @@ private fun SettingsDashboard(
                                 }
                                 val recommendationLanguageLabel = if (model.recommendationLanguage == "country") stringResource(R.string.recommendations_language_country) else Locale.forLanguageTag(model.recommendationLanguage).getDisplayLanguage(Locale.getDefault())
                                 SettingsChoice(stringResource(R.string.recommendations_language), recommendationLanguageLabel, recommendationLanguageOptions) { model.updateRecommendationLanguage(it) }
-                                OutlinedButton(onClick = { onSelectSubpage("translation") }, modifier = Modifier.fillMaxWidth()) {
-                                    Text(stringResource(R.string.translation_settings_title))
-                                }
+                            }
+                            "subtitles" -> {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_remember_channel), Modifier.weight(1f)); Switch(rememberSubtitleChannel, { rememberSubtitleChannel = it; playerPrefs.edit().putBoolean("rememberSubtitleByChannel", it).apply() }) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_default_enabled), Modifier.weight(1f)); Switch(subtitlesDefault, { subtitlesDefault = it; playerPrefs.edit().putBoolean("subtitlesEnabledByDefault", it).apply() }) }
+                                SettingsChoice(stringResource(R.string.subtitle_color), stringResource(when (subtitleColor) { "yellow" -> R.string.subtitle_color_yellow; "cyan" -> R.string.subtitle_color_cyan; "green" -> R.string.subtitle_color_green; else -> R.string.subtitle_color_white }), listOf("white" to stringResource(R.string.subtitle_color_white), "yellow" to stringResource(R.string.subtitle_color_yellow), "cyan" to stringResource(R.string.subtitle_color_cyan), "green" to stringResource(R.string.subtitle_color_green))) { subtitleColor = it; playerPrefs.edit().putString("subtitleColor", it).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_size), "${(subtitleSize * 100).toInt()}%", listOf("0.04" to "Small", "0.053" to "Medium", "0.065" to "Large")) { subtitleSize = it.toFloat(); playerPrefs.edit().putFloat("subtitleSize", subtitleSize).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_horizontal_position), "${(subtitleHorizontal * 100).toInt()}%", (5..95 step 5).map { "${it / 100f}" to "$it%" }) { subtitleHorizontal = it.toFloat(); playerPrefs.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontal).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_bottom_offset), "${(subtitleOffset * 100).toInt()}%", (5..50 step 5).map { "${it / 100f}" to "$it%" }) { subtitleOffset = it.toFloat(); playerPrefs.edit().putFloat("subtitleBottomOffset", subtitleOffset).apply() }
+                                SettingsChoice(stringResource(R.string.subtitle_language), if (preferredSubtitleLanguage == "auto") stringResource(R.string.subtitle_language_auto) else preferredSubtitleLanguage.uppercase(), listOf("auto" to stringResource(R.string.subtitle_language_auto), "ru" to "Русский", "en" to "English", "de" to "Deutsch", "fr" to "Français", "es" to "Español")) { preferredSubtitleLanguage = it; playerPrefs.edit().putString("preferredSubtitleLanguage", it).apply() }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_background_enabled), Modifier.weight(1f)); Switch(subtitleBackgroundEnabled, { subtitleBackgroundEnabled = it; playerPrefs.edit().putBoolean("subtitleBackgroundEnabled", it).apply() }) }
+                                if (subtitleBackgroundEnabled) SettingsChoice(stringResource(R.string.subtitle_background_opacity), "${(subtitleBackgroundOpacity * 100).toInt()}%", listOf("0.25" to "25%", "0.40" to "40%", "0.55" to "55%", "0.70" to "70%", "0.85" to "85%")) { subtitleBackgroundOpacity = it.toFloat(); playerPrefs.edit().putFloat("subtitleBackgroundOpacity", subtitleBackgroundOpacity).apply() }
+                                OutlinedButton(onClick = { onSelectSubpage("translation") }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.translation_settings_title)) }
                             }
                             "general" -> {
                                 val homeModeLabel = stringResource(when (model.homePageDisplayMode) {
@@ -3234,14 +3294,6 @@ private fun SettingsDashboard(
                                     SettingsChoice(stringResource(R.string.player_clock_backdrop), stringResource(when (model.playerClockBackdrop) { "none" -> R.string.player_clock_backdrop_none; "light" -> R.string.player_clock_backdrop_light; "strong" -> R.string.player_clock_backdrop_strong; else -> R.string.player_clock_backdrop_medium }), listOf("none" to stringResource(R.string.player_clock_backdrop_none), "light" to stringResource(R.string.player_clock_backdrop_light), "medium" to stringResource(R.string.player_clock_backdrop_medium), "strong" to stringResource(R.string.player_clock_backdrop_strong))) { model.updatePlayerClockBackdrop(it) }
                                 }
                                 SettingsChoice(stringResource(R.string.player_resume_title), stringResource(if (model.resumePlayback) R.string.player_resume_saved else R.string.player_resume_start), listOf("false" to stringResource(R.string.player_resume_start), "true" to stringResource(R.string.player_resume_saved))) { model.updateResumePlayback(it.toBoolean()) }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_remember_channel), Modifier.weight(1f)); Switch(rememberSubtitleChannel, { rememberSubtitleChannel = it; playerPrefs.edit().putBoolean("rememberSubtitleByChannel", it).apply() }) }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_default_enabled), Modifier.weight(1f)); Switch(subtitlesDefault, { subtitlesDefault = it; playerPrefs.edit().putBoolean("subtitlesEnabledByDefault", it).apply() }) }
-                                SettingsChoice(stringResource(R.string.subtitle_color), stringResource(when (subtitleColor) { "yellow" -> R.string.subtitle_color_yellow; "cyan" -> R.string.subtitle_color_cyan; "green" -> R.string.subtitle_color_green; else -> R.string.subtitle_color_white }), listOf("white" to stringResource(R.string.subtitle_color_white), "yellow" to stringResource(R.string.subtitle_color_yellow), "cyan" to stringResource(R.string.subtitle_color_cyan), "green" to stringResource(R.string.subtitle_color_green))) { subtitleColor = it; playerPrefs.edit().putString("subtitleColor", it).apply() }
-                                SettingsChoice(stringResource(R.string.subtitle_size), "${(subtitleSize * 100).toInt()}%", listOf("0.04" to "Small", "0.053" to "Medium", "0.065" to "Large")) { subtitleSize = it.toFloat(); playerPrefs.edit().putFloat("subtitleSize", subtitleSize).apply() }
-                                SettingsChoice(stringResource(R.string.subtitle_horizontal_position), "${(subtitleHorizontal * 100).toInt()}%", (5..95 step 5).map { "${it / 100f}" to "$it%" }) { subtitleHorizontal = it.toFloat(); playerPrefs.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontal).apply() }
-                                SettingsChoice(stringResource(R.string.subtitle_bottom_offset), "${(subtitleOffset * 100).toInt()}%", (5..50 step 5).map { "${it / 100f}" to "$it%" }) { subtitleOffset = it.toFloat(); playerPrefs.edit().putFloat("subtitleBottomOffset", subtitleOffset).apply() }
-                                SettingsChoice(stringResource(R.string.subtitle_language), if (preferredSubtitleLanguage == "auto") stringResource(R.string.subtitle_language_auto) else preferredSubtitleLanguage.uppercase(), listOf("auto" to stringResource(R.string.subtitle_language_auto), "ru" to "Русский", "en" to "English", "de" to "Deutsch", "fr" to "Français", "es" to "Español")) { preferredSubtitleLanguage = it; playerPrefs.edit().putString("preferredSubtitleLanguage", it).apply() }
-
                             }
                             "search" -> {
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -3390,9 +3442,15 @@ private fun SettingsDashboard(
                                 OutlinedButton(onClick = onImportBackup, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.backup_restore)) }
                             }
                             "about" -> {
-                                Text(stringResource(R.string.about_version, BuildConfig.VERSION_NAME), style = MaterialTheme.typography.bodyLarge)
-                                Text(stringResource(R.string.about_version_date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(stringResource(R.string.about_artic_fox), style = MaterialTheme.typography.bodyMedium)
+                                Box(Modifier.fillMaxWidth().heightIn(min = 620.dp)) {
+                                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Image(painterResource(LocalPeerIcheTheme.current.logoResource), contentDescription = stringResource(R.string.app_name), contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(84.dp).padding(horizontal = 10.dp))
+                                        Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
+                                        Text(stringResource(R.string.about_version_date), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Button(onClick = onCheckForUpdates, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.update_check_action)) }
+                                    }
+                                    Text(stringResource(R.string.about_artic_fox), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 8.dp))
+                                }
                             }
                         }
                     }
@@ -3418,7 +3476,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
             restoreFocus = false
         }
     }
-    Text(title, style = MaterialTheme.typography.titleSmall)
+    Text(title, style = MaterialTheme.typography.titleMedium)
     OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().focusRequester(choiceFocus)) {
             Text(selected, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
     }
@@ -3763,10 +3821,10 @@ internal fun formatPublishedDate(value: String?): String? {
                         Column {
                             val progress = if (video.duration > 0) ((watchProgressMs[video.uuid] ?: 0L).toFloat() / (video.duration * 1000f)).coerceIn(0f, 1f) else 0f
                             VideoThumbnail(video, server, Modifier.fillMaxWidth().aspectRatio(16f / 9f), progress)
-                            Column(Modifier.fillMaxWidth().height((titleLines * 20 + 58).dp).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Column(Modifier.fillMaxWidth().height((titleLines * 23 + 58).dp).padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                 TranslatedVideoMetadataText(
                                     video.name,
-                                    style = MaterialTheme.typography.titleSmall,
+                                    style = MaterialTheme.typography.titleMedium,
                                     maxLines = titleLines,
                                     minLines = titleLines,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,

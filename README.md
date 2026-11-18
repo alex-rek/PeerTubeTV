@@ -6,7 +6,7 @@ PeerIcheTV connects to PeerTube servers that expose the public PeerTube API. The
 
 The interface design was inspired by [SmartTube](https://github.com/yuliskov/SmartTube), an Android TV media client. PeerIcheTV is an independent project and is not affiliated with SmartTube.
 
-[Download the latest APK](https://github.com/alex-rek/PeerTubeTV/releases/latest) · [Русская версия](README_RU.md)
+[Download the latest APK](https://github.com/alex-rek/PeerIcheTV/releases/latest) · [Русская версия](README_RU.md)
 
 ## Features
 
@@ -28,7 +28,7 @@ Features can vary with the selected server and the availability of videos in the
 
 ## Download and install
 
-Download the APK from the [Releases page](https://github.com/alex-rek/PeerTubeTV/releases/latest) and install it on an Android TV device or tablet. Android may ask you to allow installation from the app used to open the APK.
+Download the APK from the [Releases page](https://github.com/alex-rek/PeerIcheTV/releases/latest) and install it on an Android TV device or tablet. Android may ask you to allow installation from the app used to open the APK.
 
 ## Build from source
 

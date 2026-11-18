@@ -17,12 +17,12 @@ data class GitHubRelease(
 )
 
 object GitHubUpdates {
-    private const val RELEASE_URL = "https://api.github.com/repos/alex-rek/PeerTubeTV/releases/latest"
+    private const val RELEASE_URL = "https://api.github.com/repos/alex-rek/PeerIcheTV/releases/latest"
     private const val MAX_RELEASE_JSON_BYTES = 1_000_000
     private const val MAX_APK_BYTES = 250L * 1024 * 1024
     private val allowedDownloadHosts = setOf("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
 
-    fun latestRelease(context: Context, installedVersion: String): GitHubRelease? {
+    fun latestRelease(context: Context, installedVersion: String, includeCurrent: Boolean = false): GitHubRelease? {
         val cacheBody = File(context.cacheDir, "github-latest-release.json")
         val cacheEtag = File(context.cacheDir, "github-latest-release.etag")
         val connection = (URL(RELEASE_URL).openConnection() as HttpURLConnection).apply {
@@ -41,7 +41,7 @@ object GitHubUpdates {
                     cacheBody.writeText(body)
                     connection.getHeaderField("ETag")?.let(cacheEtag::writeText)
                 }
-                else -> return null
+                else -> error("GitHub returned HTTP ${connection.responseCode}")
             }
         } finally {
             connection.disconnect()
@@ -49,7 +49,7 @@ object GitHubUpdates {
         val release = runCatching { JsonParser.parseString(json).asJsonObject }.getOrNull() ?: return null
         if (release.get("draft")?.asBoolean != false || release.get("prerelease")?.asBoolean != false) return null
         val version = release.get("tag_name")?.asString.orEmpty().removePrefix("v").removePrefix("V")
-        if (version.isBlank() || compareVersions(version, installedVersion) <= 0) return null
+        if (version.isBlank() || (!includeCurrent && compareVersions(version, installedVersion) <= 0)) return null
         val assets = release.getAsJsonArray("assets") ?: return null
         val apkAssets = assets.map { it.asJsonObject }
             .filter { it.get("name")?.asString?.endsWith(".apk", ignoreCase = true) == true }

@@ -282,6 +282,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var subtitleHorizontalPosition by remember(playerPreferences) { mutableFloatStateOf(playerPreferences.getFloat("subtitleHorizontalPosition", 0.50f).coerceIn(0.05f, 0.95f)) }
     var subtitleSize by remember(playerPreferences) { mutableFloatStateOf(playerPreferences.getFloat("subtitleSize", 0.053f)) }
     var subtitleColor by remember(playerPreferences) { mutableStateOf(playerPreferences.getString("subtitleColor", if (playerPreferences.getString("subtitleStyle", "default") == "yellow") "yellow" else "white") ?: "white") }
+    var subtitleBackgroundEnabled by remember(playerPreferences) { mutableStateOf(playerPreferences.getBoolean("subtitleBackgroundEnabled", false)) }
+    var subtitleBackgroundOpacity by remember(playerPreferences) { mutableFloatStateOf(playerPreferences.getFloat("subtitleBackgroundOpacity", 0.65f).coerceIn(0.15f, 0.90f)) }
     var subtitleTranslationLanguage by remember(playerPreferences, appUiLanguageTag) {
         mutableStateOf(if (!playerPreferences.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceTranslationLanguage
         else playerPreferences.getString("subtitleTranslationLanguage", interfaceTranslationLanguage) ?: interfaceTranslationLanguage)
@@ -946,7 +948,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     else -> true
                 }
             } else if (subtitlePanelOpen) {
-                val lastRow = subtitles.size + 8
+                val lastRow = subtitles.size + 10
                 val subtitleLanguages = listOf("auto") + subtitles.mapNotNull { it.language?.id }.distinct()
                 val translationLanguages = listOf(interfaceTranslationLanguage) + subtitleTranslationLanguageCodes().filter { it != interfaceTranslationLanguage }.sorted()
                 fun adjustCurrentSubtitleSetting(direction: Int) {
@@ -981,6 +983,16 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                             if (subtitleTranslationEnabled) startSubtitleTranslation(true)
                         }
                         subtitles.size + 8 -> startSubtitleTranslation(!subtitleTranslationEnabled)
+                        subtitles.size + 9 -> {
+                            subtitleBackgroundEnabled = !subtitleBackgroundEnabled
+                            playerPreferences.edit().putBoolean("subtitleBackgroundEnabled", subtitleBackgroundEnabled).apply()
+                            playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor)
+                        }
+                        subtitles.size + 10 -> {
+                            subtitleBackgroundOpacity = listOf(.25f, .40f, .55f, .70f, .85f).cyclicNext(subtitleBackgroundOpacity, direction)
+                            playerPreferences.edit().putFloat("subtitleBackgroundOpacity", subtitleBackgroundOpacity).apply()
+                            playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor)
+                        }
                     }
                 }
                 when (event.nativeKeyEvent.keyCode) {
@@ -1099,28 +1111,24 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 val height = (playerSurfaceView?.height ?: 1080).toFloat()
                 val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
                 val captionColor = when (subtitleColor) { "yellow" -> Color.Yellow; "cyan" -> Color.Cyan; "green" -> Color.Green; else -> MaterialTheme.colorScheme.onSurface }
-                val captionModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(.9f)
+                val captionModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
                     .graphicsLayer {
                         translationX = (playerSurfaceView?.width ?: 0) * (subtitleHorizontalPosition - .5f)
                         translationY = -(playerSurfaceView?.height ?: 0) * subtitleBottomOffset
                     }
-                Text(
-                    cue.text,
-                    color = Color.Black,
-                    fontSize = (height * subtitleSize / density).sp,
-                    lineHeight = (height * subtitleSize * 1.2f / density).sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    style = MaterialTheme.typography.bodyLarge.copy(drawStyle = Stroke(width = 3.5f)),
-                    modifier = captionModifier
-                )
-                Text(
-                    cue.text,
-                    color = captionColor,
-                    fontSize = (height * subtitleSize / density).sp,
-                    lineHeight = (height * subtitleSize * 1.2f / density).sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = captionModifier
-                )
+                Box(captionModifier) {
+                    Column(
+                        Modifier.widthIn(max = with(androidx.compose.ui.platform.LocalDensity.current) { (context.resources.displayMetrics.widthPixels * .9f).toDp() })
+                            .background(if (subtitleBackgroundEnabled) Color.Black.copy(alpha = subtitleBackgroundOpacity) else Color.Transparent, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    ) {
+                        Box {
+                            Text(cue.text, color = Color.Black, fontSize = (height * subtitleSize / density).sp, lineHeight = (height * subtitleSize * 1.2f / density).sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.bodyLarge.copy(drawStyle = Stroke(width = 3.5f)))
+                            Text(cue.text, color = captionColor, fontSize = (height * subtitleSize / density).sp, lineHeight = (height * subtitleSize * 1.2f / density).sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
+                }
             }
         }
         if (isBuffering && playbackError == null) CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center), color = MaterialTheme.colorScheme.onSurface)
@@ -1281,6 +1289,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 TextButton(onClick = { startSubtitleTranslation(!subtitleTranslationEnabled) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 8) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
                     Text("${stringResource(R.string.subtitle_translation)}: ${if (subtitleTranslationEnabled) stringResource(R.string.translation_on) else stringResource(R.string.translation_off)}", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
+                TextButton(onClick = { subtitleBackgroundEnabled = !subtitleBackgroundEnabled; playerPreferences.edit().putBoolean("subtitleBackgroundEnabled", subtitleBackgroundEnabled).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 9) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_background_enabled)}: ${if (subtitleBackgroundEnabled) stringResource(R.string.translation_on) else stringResource(R.string.translation_off)}", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
+                }
+                TextButton(onClick = { subtitleBackgroundOpacity = listOf(.25f, .40f, .55f, .70f, .85f).cyclicNext(subtitleBackgroundOpacity, 1); playerPreferences.edit().putFloat("subtitleBackgroundOpacity", subtitleBackgroundOpacity).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, enabled = subtitleBackgroundEnabled, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 10) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_background_opacity)}: ${(subtitleBackgroundOpacity * 100).toInt()}%", color = if (subtitleBackgroundEnabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                }
                 Text(stringResource(R.string.subtitle_translation_hint), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .65f), style = MaterialTheme.typography.bodySmall)
                 if (translationPreparing) Text(stringResource(R.string.subtitle_translation_preparing), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
                 else if (translationJob?.isActive == true) Text(stringResource(R.string.subtitle_translation_progress, translationProgress, translationTotal), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
@@ -1419,8 +1433,12 @@ private class RemotePlayerView(context: Context) : PlayerView(context) {
             "green" -> android.graphics.Color.GREEN
             else -> android.graphics.Color.WHITE
         }
+        val preferences = context.getSharedPreferences("peertube", Context.MODE_PRIVATE)
+        val backgroundEnabled = preferences.getBoolean("subtitleBackgroundEnabled", false)
+        val opacity = preferences.getFloat("subtitleBackgroundOpacity", 0.65f).coerceIn(0.15f, 0.90f)
+        val background = if (backgroundEnabled) android.graphics.Color.argb((opacity * 255).toInt(), 0, 0, 0) else android.graphics.Color.TRANSPARENT
         subtitleView?.setFractionalTextSize(fraction)
-        subtitleView?.setStyle(CaptionStyleCompat(color, android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
+        subtitleView?.setStyle(CaptionStyleCompat(color, background, android.graphics.Color.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_OUTLINE, android.graphics.Color.BLACK, null))
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {

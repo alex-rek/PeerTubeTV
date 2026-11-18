@@ -154,4 +154,10 @@
     <string name="account_error_response">Сервер вернул некорректный ответ.</string>
     <string name="account_error_limit">Можно сохранить не более 20 аккаунтов.</string>
     <string name="account_error_network">Не удалось подключиться к серверу PeerTube.</string>
+    <string name="settings_subtitles">Субтитры</string>
+    <string name="subtitle_background_enabled">Подложка под текст субтитров</string>
+    <string name="subtitle_background_opacity">Непрозрачность подложки</string>
+    <string name="update_check_action">Проверить обновления</string>
+    <string name="update_checking">Проверка обновлений…</string>
+    <string name="update_no_new_version">Установлена последняя версия PeerIcheTV.</string>
 </resources>
