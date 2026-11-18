@@ -532,7 +532,13 @@ class HomeModel : ViewModel() {
         } else {
             resumePlayback = prefs?.getBoolean("resumePlayback", true) ?: true
         }
-        watchedRecommendationThreshold = prefs?.getString("watchedRecommendationThreshold", if (prefs?.getBoolean("hideWatchedRecommendations", true) == true) "complete" else "never")
+        watchedRecommendationThreshold = when (prefs?.getString("watchedRecommendationThreshold", if (prefs?.getBoolean("hideWatchedRecommendations", true) == true) "complete" else "never")) {
+            "minute" -> "percent_5"
+            "three_minutes" -> "percent_10"
+            "half" -> "percent_50"
+            "percent_5", "percent_10", "percent_50", "complete", "never" -> prefs?.getString("watchedRecommendationThreshold", "never") ?: "never"
+            else -> "never"
+        }
             ?.takeIf { it in setOf("never", "minute", "three_minutes", "half", "complete") } ?: "never"
         recommendationBasis = prefs?.getString("recommendationBasis", "history")?.takeIf { it in setOf("history", "subscriptions", "both") } ?: "history"
         recommendationLanguage = prefs?.getString("recommendationLanguage", "country")?.takeIf { it == "country" || it in Locale.getISOLanguages() } ?: "country"
@@ -898,7 +904,7 @@ class HomeModel : ViewModel() {
     fun updatePlayerClockBackdrop(backdrop: String) { playerClockBackdrop = backdrop.takeIf { it == "none" || it == "light" || it == "medium" || it == "strong" } ?: "medium"; save() }
     fun updateResumePlayback(resume: Boolean) { resumePlayback = resume; save() }
     fun updateWatchedRecommendationThreshold(threshold: String) {
-        watchedRecommendationThreshold = threshold.takeIf { it in setOf("never", "minute", "three_minutes", "half", "complete") } ?: "never"
+        watchedRecommendationThreshold = threshold.takeIf { it in setOf("never", "percent_5", "percent_10", "percent_50", "complete") } ?: "never"
         save()
         recommendations = if (watchedRecommendationThreshold == "never") recommendations else recommendations.filterNot { it.uuid in watchedVideoIds }
         loadRecommendations()
@@ -2184,7 +2190,23 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         }
                         var railFocused by remember(key) { mutableStateOf(false) }
                         IconButton(onClick = { navigateToSection(key, false) }, modifier = Modifier.size(44.dp)
-                            .onFocusChanged { railFocused = it.isFocused; if (it.isFocused) focusedMenuSectionKey = key }
+                            .onFocusChanged {
+                                railFocused = it.isFocused
+                                if (it.isFocused) {
+                                    focusedMenuSectionKey = key
+                                    pendingMenuFocus[0]?.second?.cancel()
+                                    pendingMenuFocus[0] = key to menuFocusScope.launch {
+                                        delay(220)
+                                        if (!menuExpanded && focusedMenuSectionKey == key && pendingMenuFocus[0]?.first == key) {
+                                            pendingMenuFocus[0] = null
+                                            navigateToSection(key, false)
+                                        }
+                                    }
+                                } else if (pendingMenuFocus[0]?.first == key) {
+                                    pendingMenuFocus[0]?.second?.cancel()
+                                    pendingMenuFocus[0] = null
+                                }
+                            }
                             .background(if (isSelected || railFocused) MaterialTheme.colorScheme.primary.copy(alpha = if (railFocused) .24f else .12f) else Color.Transparent, RoundedCornerShape(12.dp))) {
                             Icon(icon, contentDescription = stringResource(label), tint = if (isSelected || railFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
                         }
@@ -2922,11 +2944,12 @@ private fun SettingsDashboard(
     }
     var rememberSubtitleChannel by remember { mutableStateOf(playerPrefs.getBoolean("rememberSubtitleByChannel", true)) }
     val categories = listOf(
-        "interface" to R.string.settings_interface,
         "accounts" to R.string.settings_accounts,
         "language" to R.string.settings_language_country,
         "general" to R.string.settings_general,
+        "interface" to R.string.settings_interface,
         "subtitles" to R.string.settings_subtitles,
+        "translation" to R.string.settings_translation,
         "player" to R.string.settings_player,
         "search" to R.string.settings_search,
         "network" to R.string.settings_network,
@@ -2966,6 +2989,7 @@ private fun SettingsDashboard(
                             when (key) {
                                 "accounts" -> Icon(Icons.Filled.AccountCircle, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "subtitles" -> Icon(Icons.Filled.ClosedCaption, contentDescription = null, modifier = Modifier.size(54.dp))
+                                "translation" -> Icon(Icons.Filled.Public, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "language" -> Icon(Icons.Filled.Public, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "general" -> Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(54.dp))
                                 "interface" -> Icon(Icons.Filled.VideoLibrary, contentDescription = null, modifier = Modifier.size(54.dp))
@@ -2991,7 +3015,6 @@ private fun SettingsDashboard(
                     val panelTitle = when (selectedSubpage) {
                         "language" -> R.string.language
                         "country" -> R.string.country_label
-                        "translation" -> R.string.translation_settings_title
                         else -> categories.firstOrNull { it.first == selectedCategory }?.second ?: R.string.settings_general
                     }
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2999,7 +3022,7 @@ private fun SettingsDashboard(
                         TextButton(onClick = { if (selectedSubpage != null) onSelectSubpage(null) else onSelectCategory(null) }) { Text("‹") }
                     }
                     HorizontalDivider()
-                    if (selectedSubpage == "translation") {
+                    if (selectedCategory == "translation") {
                         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                 Text(stringResource(R.string.translate_video_metadata), Modifier.weight(1f))
@@ -3129,7 +3152,6 @@ private fun SettingsDashboard(
                                 SettingsChoice(stringResource(R.string.subtitle_language), if (preferredSubtitleLanguage == "auto") stringResource(R.string.subtitle_language_auto) else preferredSubtitleLanguage.uppercase(), listOf("auto" to stringResource(R.string.subtitle_language_auto), "ru" to "Русский", "en" to "English", "de" to "Deutsch", "fr" to "Français", "es" to "Español")) { preferredSubtitleLanguage = it; playerPrefs.edit().putString("preferredSubtitleLanguage", it).apply() }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.subtitle_background_enabled), Modifier.weight(1f)); Switch(subtitleBackgroundEnabled, { subtitleBackgroundEnabled = it; playerPrefs.edit().putBoolean("subtitleBackgroundEnabled", it).apply() }) }
                                 if (subtitleBackgroundEnabled) SettingsChoice(stringResource(R.string.subtitle_background_opacity), "${(subtitleBackgroundOpacity * 100).toInt()}%", listOf("0.25" to "25%", "0.40" to "40%", "0.55" to "55%", "0.70" to "70%", "0.85" to "85%")) { subtitleBackgroundOpacity = it.toFloat(); playerPrefs.edit().putFloat("subtitleBackgroundOpacity", subtitleBackgroundOpacity).apply() }
-                                OutlinedButton(onClick = { onSelectSubpage("translation") }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.translation_settings_title)) }
                             }
                             "general" -> {
                                 val homeModeLabel = stringResource(when (model.homePageDisplayMode) {
@@ -3222,18 +3244,18 @@ private fun SettingsDashboard(
                                     }
                                 ) { model.updateContextMenuHoldSeconds(it.toFloat()) }
                                 val watchedThresholdLabel = stringResource(when (model.watchedRecommendationThreshold) {
-                                    "minute" -> R.string.watched_threshold_minute
-                                    "three_minutes" -> R.string.watched_threshold_three_minutes
-                                    "half" -> R.string.watched_threshold_half
-                                    "complete" -> R.string.watched_threshold_complete
+                                    "percent_5" -> R.string.watched_threshold_5_percent
+                                    "percent_10" -> R.string.watched_threshold_10_percent
+                                    "percent_50" -> R.string.watched_threshold_50_percent
+                                    "complete" -> R.string.watched_threshold_100_percent
                                     else -> R.string.watched_threshold_never
                                 })
                                 SettingsChoice(stringResource(R.string.hide_watched_recommendations), watchedThresholdLabel, listOf(
                                     "never" to stringResource(R.string.watched_threshold_never),
-                                    "minute" to stringResource(R.string.watched_threshold_minute),
-                                    "three_minutes" to stringResource(R.string.watched_threshold_three_minutes),
-                                    "half" to stringResource(R.string.watched_threshold_half),
-                                    "complete" to stringResource(R.string.watched_threshold_complete)
+                                    "percent_5" to stringResource(R.string.watched_threshold_5_percent),
+                                    "percent_10" to stringResource(R.string.watched_threshold_10_percent),
+                                    "percent_50" to stringResource(R.string.watched_threshold_50_percent),
+                                    "complete" to stringResource(R.string.watched_threshold_100_percent)
                                 )) { model.updateWatchedRecommendationThreshold(it) }
                                 val recommendationBasisLabel = stringResource(when (model.recommendationBasis) {
                                     "subscriptions" -> R.string.recommendations_basis_subscriptions
@@ -3256,6 +3278,13 @@ private fun SettingsDashboard(
                                 OutlinedButton(onClick = onClearHistoryPeriod, enabled = model.history.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.history_clear_period_action)) }
                             }
                             "interface" -> {
+                                val themeLabel = stringResource(when (model.selectedTheme) { PeerIcheThemes.LIGHT -> R.string.theme_light; PeerIcheThemes.PEERTUBE -> R.string.theme_peertube; PeerIcheThemes.BLUE -> R.string.theme_blue; else -> R.string.theme_graphite })
+                                SettingsChoice(stringResource(R.string.color_theme), themeLabel, listOf(
+                                    PeerIcheThemes.GRAPHITE to stringResource(R.string.theme_graphite),
+                                    PeerIcheThemes.LIGHT to stringResource(R.string.theme_light),
+                                    PeerIcheThemes.PEERTUBE to stringResource(R.string.theme_peertube),
+                                    PeerIcheThemes.BLUE to stringResource(R.string.theme_blue),
+                                )) { model.updateTheme(it) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Text(stringResource(R.string.grid_mode), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                                     Switch(model.gridMode, { model.gridMode = it; model.save() })
@@ -3265,13 +3294,6 @@ private fun SettingsDashboard(
                                 val speedLabel = "${String.format(Locale.ROOT, "%.1f", model.tickerSpeed).removeSuffix(".0")}x"
                                 SettingsChoice(stringResource(R.string.ticker_speed), speedLabel, (2..16).map { n -> val speed = n / 2f; "${speed}" to "${String.format(Locale.ROOT, "%.1f", speed).removeSuffix(".0")}x" }) { model.updateTickerSpeed(it.toFloat()) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.clock_24_hour), Modifier.weight(1f)); Switch(model.clock24Hour, model::updateClock24Hour) }
-                                val themeLabel = stringResource(when (model.selectedTheme) { PeerIcheThemes.LIGHT -> R.string.theme_light; PeerIcheThemes.PEERTUBE -> R.string.theme_peertube; PeerIcheThemes.BLUE -> R.string.theme_blue; else -> R.string.theme_graphite })
-                                SettingsChoice(stringResource(R.string.color_theme), themeLabel, listOf(
-                                    PeerIcheThemes.GRAPHITE to stringResource(R.string.theme_graphite),
-                                    PeerIcheThemes.LIGHT to stringResource(R.string.theme_light),
-                                    PeerIcheThemes.PEERTUBE to stringResource(R.string.theme_peertube),
-                                    PeerIcheThemes.BLUE to stringResource(R.string.theme_blue),
-                                )) { model.updateTheme(it) }
                                 SettingsChoice(stringResource(R.string.ui_scale), "${String.format(Locale.ROOT, "%.2f", model.uiScale)}x", (85..140 step 5).map { it / 100f }.map { it.toString() to "${String.format(Locale.ROOT, "%.2f", it)}x" }) { model.updateUiScale(it.toFloat()) }
                                 SettingsChoice(stringResource(R.string.grid_scale), "${String.format(Locale.ROOT, "%.2f", model.gridScale)}x", (50..150 step 5).map { it / 100f }.map { it.toString() to "${String.format(Locale.ROOT, "%.2f", it)}x" }) { model.updateGridScale(it.toFloat()) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.navigation_sounds), Modifier.weight(1f)); Switch(model.navigationSounds, model::updateNavigationSounds) }

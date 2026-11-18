@@ -1478,9 +1478,9 @@ private fun persistWatchProgress(context: android.content.Context, uuid: String,
 private fun isWatchedThresholdMet(threshold: String, positionMs: Long, durationMs: Long): Boolean {
     if (durationMs <= 0L) return false
     return when (threshold) {
-        "minute" -> positionMs >= 60_000L
-        "three_minutes" -> positionMs >= 180_000L
-        "half" -> positionMs >= durationMs / 2L
+        "percent_5" -> positionMs >= durationMs * 5L / 100L
+        "percent_10" -> positionMs >= durationMs / 10L
+        "percent_50" -> positionMs >= durationMs / 2L
         "complete" -> false // completion is recorded by ExoPlayer's STATE_ENDED callback
         else -> false
     }

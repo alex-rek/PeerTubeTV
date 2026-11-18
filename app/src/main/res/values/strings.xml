@@ -27,6 +27,10 @@
     <string name="channel_video_count">Videos: %1$s</string>
     <string name="context_menu_hold_duration">Hold center button for context menu</string>
     <string name="watched_threshold_never">Never</string>
+    <string name="watched_threshold_5_percent">5%</string>
+    <string name="watched_threshold_10_percent">10%</string>
+    <string name="watched_threshold_50_percent">50%</string>
+    <string name="watched_threshold_100_percent">100%</string>
     <string name="watched_threshold_minute">1 minute</string>
     <string name="watched_threshold_three_minutes">3 minutes</string>
     <string name="watched_threshold_half">Half</string>
@@ -155,6 +159,7 @@
     <string name="account_error_limit">You can save up to 20 accounts.</string>
     <string name="account_error_network">Could not connect to the PeerTube server.</string>
     <string name="settings_subtitles">Subtitles</string>
+    <string name="settings_translation">Translation</string>
     <string name="subtitle_background_enabled">Subtitle text background</string>
     <string name="subtitle_background_opacity">Background opacity</string>
     <string name="update_check_action">Check for updates</string>
