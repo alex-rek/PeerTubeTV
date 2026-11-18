@@ -1,10 +1,10 @@
-# PeerTubeTV
+# PeerIcheTV
 
 **Клиент PeerTube для Android TV и планшетов на Kotlin и Media3.**
 
-PeerTubeTV подключается к серверам PeerTube с открытым API. Интерфейс рассчитан на управление пультом телевизора и сенсорный экран.
+PeerIcheTV подключается к серверам PeerTube с открытым API. Интерфейс рассчитан на управление пультом телевизора и сенсорный экран.
 
-Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerTubeTV — независимый проект, не связанный с SmartTube.
+Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerIcheTV — независимый проект, не связанный с SmartTube.
 
 [Скачать последнюю версию APK](https://github.com/alex-rek/PeerTubeTV/releases/latest) · [English](README.md)
 
@@ -16,6 +16,7 @@ PeerTubeTV подключается к серверам PeerTube с открыт
 - История просмотров, избранное, продолжение воспроизведения и рекомендации на основе истории.
 - Воспроизведение через Android Media3 / ExoPlayer, включая доступные субтитры.
 - Настройки воспроизведения и интерфейса.
+- Четыре темы интерфейса: «Графитовая», «Светлая», «PeerTube» и «Синяя».
 - Отображение рекомендаций на главном экране Android TV, если устройство и разрешения это поддерживают.
 
 Доступность функций зависит от выбранного сервера и индекса поиска видео.
@@ -45,7 +46,7 @@ PeerTubeTV подключается к серверам PeerTube с открыт
 .\gradlew.bat assembleDebug
 ```
 
-APK появится по пути `app/build/outputs/apk/debug/PeerTubeTV.apk`.
+APK появится по пути `app/build/outputs/apk/debug/app-universal-debug.apk`.
 
 ### Подписанный release APK
 

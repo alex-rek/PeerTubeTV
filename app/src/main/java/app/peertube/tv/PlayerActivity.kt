@@ -111,8 +111,11 @@ class PlayerActivity : AppCompatActivity() {
         val bufferProfile = intent.getStringExtra("bufferProfile")?.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"
         val playerVolume = intent.getIntExtra("playerVolume", 100).coerceIn(0, 200)
         val watchedRecommendationThreshold = intent.getStringExtra("watchedRecommendationThreshold") ?: "never"
+        val appTheme = PeerIcheThemes.fromId(
+            getSharedPreferences("peertube", MODE_PRIVATE).getString("selectedTheme", PeerIcheThemes.GRAPHITE)
+        )
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = appTheme.colors) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
                     VideoScreen(initialUrl = url, initialAudioOnly = audioOnly, initialLiveStateId = liveStateId, uuid = uuid, server = server, title = title, views = views, publishedAt = publishedAt, channelName = channelName, channelHost = channelHost, channelDisplayName = channelDisplayName, playbackQueue = playbackQueue, queueIndex = queueIndex, queueJson = queueJson, afterVideoAction = afterVideoAction, playerOverlayDurationSeconds = playerOverlayDurationSeconds, showPlayerClock = showPlayerClock, playerClockPosition = playerClockPosition, playerClockSize = playerClockSize, playerClockBackdrop = playerClockBackdrop, resumePlayback = resumePlayback, seekStepSeconds = seekStepSeconds, clock24Hour = clock24Hour, bufferProfile = bufferProfile, playerVolume = playerVolume, watchedRecommendationThreshold = watchedRecommendationThreshold)
                 }
@@ -1054,13 +1057,12 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 }
                 KeyEvent.KEYCODE_DPAD_UP -> {
                     if (!controlsVisible) { progressFocused = false; focusedControlIndex = 0; showControls() }
-                    else if (progressFocused || focusedControlIndex < 0) { progressFocused = false; focusedControlIndex = 0; showControls() }
+                    else if (!progressFocused && focusedControlIndex >= 0) { focusedControlIndex = -1; progressFocused = true; showControls() }
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
                     if (!controlsVisible) { focusedControlIndex = -1; progressFocused = true; showControls() }
-                    else if (progressFocused) { focusedControlIndex = -1; progressFocused = false; controlsVisible = false; controlsInteractionToken++ }
-                    else { focusedControlIndex = -1; progressFocused = true; showControls() }
+                    else { focusedControlIndex = -1; progressFocused = false; controlsVisible = false; controlsInteractionToken++ }
                     true
                 }
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_SELECT -> {
@@ -1096,7 +1098,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             currentCue?.let { cue ->
                 val height = (playerSurfaceView?.height ?: 1080).toFloat()
                 val density = context.resources.displayMetrics.density.coerceAtLeast(1f)
-                val captionColor = when (subtitleColor) { "yellow" -> Color.Yellow; "cyan" -> Color.Cyan; "green" -> Color.Green; else -> Color.White }
+                val captionColor = when (subtitleColor) { "yellow" -> Color.Yellow; "cyan" -> Color.Cyan; "green" -> Color.Green; else -> MaterialTheme.colorScheme.onSurface }
                 val captionModifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(.9f)
                     .graphicsLayer {
                         translationX = (playerSurfaceView?.width ?: 0) * (subtitleHorizontalPosition - .5f)
@@ -1121,19 +1123,19 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 )
             }
         }
-        if (isBuffering && playbackError == null) CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center), color = Color.White)
-        playbackError?.let { Text(it, color = Color.White, modifier = Modifier.align(androidx.compose.ui.Alignment.Center).padding(24.dp)) }
+        if (isBuffering && playbackError == null) CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center), color = MaterialTheme.colorScheme.onSurface)
+        playbackError?.let { Text(it, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.align(androidx.compose.ui.Alignment.Center).padding(24.dp)) }
         videoUnavailableReason?.let { reason ->
             Column(
                 modifier = Modifier.align(androidx.compose.ui.Alignment.Center)
-                    .background(Color(0xCC101010), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .8f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
                     .padding(horizontal = 32.dp, vertical = 24.dp),
                 horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text("🔊", fontSize = 56.sp)
-                Text(stringResource(R.string.player_video_unavailable), color = Color.White, style = MaterialTheme.typography.titleLarge)
-                Text(stringResource(R.string.player_video_unavailable_reason, reason), color = Color.White.copy(alpha = .82f), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.player_video_unavailable), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.player_video_unavailable_reason, reason), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .82f), style = MaterialTheme.typography.bodyMedium)
             }
         }
         if (showPlayerClock) {
@@ -1152,20 +1154,20 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                     .padding(horizontal = 28.dp, vertical = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                TranslatedVideoMetadataText(title, style = MaterialTheme.typography.headlineMedium, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                TranslatedVideoMetadataText(title, style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 val metadata = buildList {
                     add(channelDisplayName ?: channelName ?: context.getString(R.string.channel_unknown))
                     add(context.getString(R.string.video_views, views.toString()))
                     formatPublishedDate(publishedAt)?.let { add(context.getString(R.string.video_published, it)) }
                 }.joinToString(" · ")
-                Text(metadata, style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = .88f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(metadata, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .88f), maxLines = 1, overflow = TextOverflow.Ellipsis)
 
                 Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    Text(formatPlayerTime(playerPosition), color = Color.White, fontSize = 12.sp)
+                    Text(formatPlayerTime(playerPosition), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                     val duration = player.duration.takeIf { it > 0L } ?: 1L
                     Slider(value = (playerPosition.toFloat() / duration).coerceIn(0f, 1f), onValueChange = { playerPosition = (it * duration).toLong(); showControls() }, onValueChangeFinished = { player.seekTo(playerPosition) }, modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
-                        .then(if (progressFocused) Modifier.background(Color(0x4475D5FF), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(horizontal = 8.dp) else Modifier))
-                    Text(formatPlayerTime(player.duration), color = Color.White, fontSize = 12.sp)
+                        .then(if (progressFocused) Modifier.background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = .27f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp)).padding(horizontal = 8.dp) else Modifier))
+                    Text(formatPlayerTime(player.duration), color = MaterialTheme.colorScheme.onSurface, fontSize = 12.sp)
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     PlayerIconControl(Icons.Filled.Repeat, "Repeat video", stringResource(R.string.player_control_caption_repeat), selected = focusedControlIndex == controlActions.indexOf(3), modifier = Modifier.weight(1f)) { activateControl(3) }
@@ -1205,40 +1207,40 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd)
                     .fillMaxHeight()
                     .fillMaxWidth(.34f)
-                    .background(Color(0xF21A1A1A))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .95f))
                     .padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(stringResource(R.string.player_quality_title), color = Color.White, style = MaterialTheme.typography.headlineSmall)
-                Text(stringResource(R.string.player_quality_hint), color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.player_quality_title), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
+                Text(stringResource(R.string.player_quality_hint), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .7f), style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(8.dp))
                 panelTitles.forEachIndexed { index, label ->
                     val enabled = index != 4 || (Build.VERSION.SDK_INT >= 31 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK))
                     TextButton(
                         onClick = { if (enabled) cycleQualityRow(index, 1) },
-                        modifier = Modifier.fillMaxWidth().background(if (qualityPanelRow == index) Color(0xCCFF6D00) else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(horizontal = 8.dp),
+                        modifier = Modifier.fillMaxWidth().background(if (qualityPanelRow == index) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(8.dp)).padding(horizontal = 8.dp),
                         enabled = enabled
                     ) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(label, color = Color.White)
-                            Text(valueLabels[index], color = if (enabled) Color.White.copy(alpha = .75f) else Color.LightGray)
+                            Text(label, color = MaterialTheme.colorScheme.onSurface)
+                            Text(valueLabels[index], color = if (enabled) MaterialTheme.colorScheme.onSurface.copy(alpha = .75f) else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
                 Spacer(Modifier.weight(1f))
-                Text(stringResource(R.string.player_quality_controls_hint), color = Color.White.copy(alpha = .7f), style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.player_quality_controls_hint), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .7f), style = MaterialTheme.typography.bodySmall)
             }
         }
         if (subtitlePanelOpen) {
             Column(
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.34f)
-                    .background(Color(0xF21A1A1A)).verticalScroll(subtitlePanelScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .95f)).verticalScroll(subtitlePanelScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(stringResource(R.string.player_subtitles), color = Color.White, style = MaterialTheme.typography.headlineSmall)
-                if (subtitles.isEmpty()) Text(stringResource(R.string.subtitle_none_available), color = Color.White.copy(alpha = .7f))
-                TextButton(onClick = { selectSubtitle(-1) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == 0) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                    Text(stringResource(R.string.subtitle_track_off), color = Color.White, modifier = Modifier.fillMaxWidth())
+                Text(stringResource(R.string.player_subtitles), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
+                if (subtitles.isEmpty()) Text(stringResource(R.string.subtitle_none_available), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .7f))
+                TextButton(onClick = { selectSubtitle(-1) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == 0) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text(stringResource(R.string.subtitle_track_off), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
                 subtitles.forEachIndexed { index, caption ->
                     val automaticLabel = stringResource(R.string.subtitle_track_auto)
@@ -1248,13 +1250,13 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                         if (caption.automaticallyGenerated == true) append(" · ").append(automaticLabel)
                         if (index == selectedSubtitleIndex) append(" ✓")
                     }
-                    TextButton(onClick = { selectSubtitle(index) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == index + 1) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                        Text(captionLabel, color = Color.White, modifier = Modifier.fillMaxWidth())
+                    TextButton(onClick = { selectSubtitle(index) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == index + 1) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                        Text(captionLabel, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 val rememberRow = subtitles.size + 1
-                TextButton(onClick = { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == rememberRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                    Text("${stringResource(R.string.subtitle_remember_channel)}  ${if (rememberSubtitleByChannel) "✓" else "○"}", color = Color.White, modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { rememberSubtitleByChannel = !rememberSubtitleByChannel; playerPreferences.edit().putBoolean("rememberSubtitleByChannel", rememberSubtitleByChannel).apply() }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == rememberRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_remember_channel)}  ${if (rememberSubtitleByChannel) "✓" else "○"}", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
                 val colorRow = subtitles.size + 2
                 val sizeRow = subtitles.size + 3
@@ -1262,70 +1264,70 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 val verticalRow = subtitles.size + 5
                 val languageRow = subtitles.size + 6
                 val subtitleColorLabel = when (subtitleColor) { "yellow" -> stringResource(R.string.subtitle_color_yellow); "cyan" -> stringResource(R.string.subtitle_color_cyan); "green" -> stringResource(R.string.subtitle_color_green); else -> stringResource(R.string.subtitle_color_white) }
-                TextButton(onClick = { subtitleColor = listOf("white", "yellow", "cyan", "green").cyclicNext(subtitleColor, 1); playerPreferences.edit().putString("subtitleColor", subtitleColor).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == colorRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_color)}: $subtitleColorLabel", color = Color.White, modifier = Modifier.fillMaxWidth()) }
-                TextButton(onClick = { subtitleSize = listOf(.04f, .053f, .065f).cyclicNext(subtitleSize, 1); playerPreferences.edit().putFloat("subtitleSize", subtitleSize).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == sizeRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_size)}: ${(subtitleSize * 100).toInt()}%", color = Color.White, modifier = Modifier.fillMaxWidth()) }
-                TextButton(onClick = { subtitleHorizontalPosition = (subtitleHorizontalPosition + .05f).coerceAtMost(.95f); playerPreferences.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontalPosition).apply(); playerSurfaceView?.setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == horizontalRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_horizontal_position)}: ${(subtitleHorizontalPosition * 100).toInt()}%", color = Color.White, modifier = Modifier.fillMaxWidth()) }
-                TextButton(onClick = { adjustSubtitleBottomOffset(0.02f) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == verticalRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                    Text(stringResource(R.string.subtitle_position_from_bottom, (subtitleBottomOffset * 100).toInt()), color = Color.White, modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { subtitleColor = listOf("white", "yellow", "cyan", "green").cyclicNext(subtitleColor, 1); playerPreferences.edit().putString("subtitleColor", subtitleColor).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == colorRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_color)}: $subtitleColorLabel", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { subtitleSize = listOf(.04f, .053f, .065f).cyclicNext(subtitleSize, 1); playerPreferences.edit().putFloat("subtitleSize", subtitleSize).apply(); playerSurfaceView?.setSubtitleAppearance(subtitleSize, subtitleColor) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == sizeRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_size)}: ${(subtitleSize * 100).toInt()}%", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { subtitleHorizontalPosition = (subtitleHorizontalPosition + .05f).coerceAtMost(.95f); playerPreferences.edit().putFloat("subtitleHorizontalPosition", subtitleHorizontalPosition).apply(); playerSurfaceView?.setSubtitlePosition(subtitleBottomOffset, subtitleHorizontalPosition) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == horizontalRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_horizontal_position)}: ${(subtitleHorizontalPosition * 100).toInt()}%", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { adjustSubtitleBottomOffset(0.02f) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == verticalRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text(stringResource(R.string.subtitle_position_from_bottom, (subtitleBottomOffset * 100).toInt()), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
                 val languageCode = playerPreferences.getString("preferredSubtitleLanguage", "auto") ?: "auto"
                 val languageLabel = subtitles.firstOrNull { it.language?.id.equals(languageCode, true) }?.language?.label ?: languageCode.uppercase()
-                TextButton(onClick = { val next = (listOf("auto") + subtitles.mapNotNull { it.language?.id }.distinct()).cyclicNext(languageCode, 1); playerPreferences.edit().putString("preferredSubtitleLanguage", next).apply(); subtitles.indexOfFirst { it.language?.id.equals(next, true) }.takeIf { next != "auto" && it >= 0 }?.let(::selectSubtitle) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == languageRow) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_language)}: $languageLabel", color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                TextButton(onClick = { val next = (listOf("auto") + subtitles.mapNotNull { it.language?.id }.distinct()).cyclicNext(languageCode, 1); playerPreferences.edit().putString("preferredSubtitleLanguage", next).apply(); subtitles.indexOfFirst { it.language?.id.equals(next, true) }.takeIf { next != "auto" && it >= 0 }?.let(::selectSubtitle) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == languageRow) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) { Text("${stringResource(R.string.subtitle_language)}: $languageLabel", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth()) }
                 val translationLanguageLabel = translationLanguageName(subtitleTranslationLanguage)
                 val orderedTranslationLanguages = listOf(interfaceTranslationLanguage) + subtitleTranslationLanguageCodes().filter { it != interfaceTranslationLanguage }.sorted()
-                TextButton(onClick = { subtitleTranslationLanguage = orderedTranslationLanguages.cyclicNext(subtitleTranslationLanguage, 1); playerPreferences.edit().putString("subtitleTranslationLanguage", subtitleTranslationLanguage).putBoolean("subtitleTranslationLanguageCustom", true).apply(); if (subtitleTranslationEnabled) startSubtitleTranslation(true) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 7) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                    Text("${stringResource(R.string.subtitle_translate_to)}: $translationLanguageLabel", color = Color.White, modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { subtitleTranslationLanguage = orderedTranslationLanguages.cyclicNext(subtitleTranslationLanguage, 1); playerPreferences.edit().putString("subtitleTranslationLanguage", subtitleTranslationLanguage).putBoolean("subtitleTranslationLanguageCustom", true).apply(); if (subtitleTranslationEnabled) startSubtitleTranslation(true) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 7) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_translate_to)}: $translationLanguageLabel", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
-                TextButton(onClick = { startSubtitleTranslation(!subtitleTranslationEnabled) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 8) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) {
-                    Text("${stringResource(R.string.subtitle_translation)}: ${if (subtitleTranslationEnabled) stringResource(R.string.translation_on) else stringResource(R.string.translation_off)}", color = Color.White, modifier = Modifier.fillMaxWidth())
+                TextButton(onClick = { startSubtitleTranslation(!subtitleTranslationEnabled) }, modifier = Modifier.fillMaxWidth().background(if (subtitlePanelRow == subtitles.size + 8) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) {
+                    Text("${stringResource(R.string.subtitle_translation)}: ${if (subtitleTranslationEnabled) stringResource(R.string.translation_on) else stringResource(R.string.translation_off)}", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth())
                 }
-                Text(stringResource(R.string.subtitle_translation_hint), color = Color.White.copy(alpha = .65f), style = MaterialTheme.typography.bodySmall)
-                if (translationPreparing) Text(stringResource(R.string.subtitle_translation_preparing), color = Color.White.copy(alpha = .75f))
-                else if (translationJob?.isActive == true) Text(stringResource(R.string.subtitle_translation_progress, translationProgress, translationTotal), color = Color.White.copy(alpha = .75f))
-                translationError?.let { Text(it, color = Color(0xFFFFB4AB)) }
+                Text(stringResource(R.string.subtitle_translation_hint), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .65f), style = MaterialTheme.typography.bodySmall)
+                if (translationPreparing) Text(stringResource(R.string.subtitle_translation_preparing), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
+                else if (translationJob?.isActive == true) Text(stringResource(R.string.subtitle_translation_progress, translationProgress, translationTotal), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
+                translationError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         }
         if (infoPanelOpen) {
             Column(
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.38f)
-                    .background(Color(0xF21A1A1A)).verticalScroll(infoScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .95f)).verticalScroll(infoScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                TranslatedVideoMetadataText(title, color = Color.White, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(channelDisplayName ?: channelName ?: stringResource(R.string.channel_unknown), color = Color.White.copy(alpha = .8f), style = MaterialTheme.typography.titleMedium)
-                Text(stringResource(R.string.video_views, views.toString()), color = Color.White.copy(alpha = .8f))
-                formatPublishedDate(publishedAt)?.let { Text(stringResource(R.string.video_published, it), color = Color.White.copy(alpha = .8f)) }
-                HorizontalDivider(color = Color.White.copy(alpha = .3f))
+                TranslatedVideoMetadataText(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(channelDisplayName ?: channelName ?: stringResource(R.string.channel_unknown), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .8f), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.video_views, views.toString()), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .8f))
+                formatPublishedDate(publishedAt)?.let { Text(stringResource(R.string.video_published, it), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .8f)) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = .3f))
                 if (description.isBlank()) {
-                    Text(stringResource(R.string.player_info_unavailable), color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
+                    Text(stringResource(R.string.player_info_unavailable), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
                 } else {
-                    TranslatedVideoMetadataText(description, color = Color.White, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
+                    TranslatedVideoMetadataText(description, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
                 }
                 Spacer(Modifier.height(8.dp))
                 TextButton(
                     onClick = { openChannelVideos() },
-                    modifier = Modifier.fillMaxWidth().background(if (infoPanelChannelFocused) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))
-                ) { Text(stringResource(R.string.open_channel_video_page), color = Color.White, modifier = Modifier.fillMaxWidth()) }
+                    modifier = Modifier.fillMaxWidth().background(if (infoPanelChannelFocused) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))
+                ) { Text(stringResource(R.string.open_channel_video_page), color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.fillMaxWidth()) }
             }
         }
         if (commentsPanelOpen) {
             Column(
                 Modifier.align(androidx.compose.ui.Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.38f)
-                    .background(Color(0xF21A1A1A)).verticalScroll(commentsScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = .95f)).verticalScroll(commentsScrollState).padding(horizontal = 24.dp, vertical = 26.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(stringResource(R.string.player_comments), color = Color.White, style = MaterialTheme.typography.headlineSmall)
-                if (commentsLoading && comments.isEmpty()) Text(stringResource(R.string.player_comments_loading), color = Color.White.copy(alpha = .75f))
-                commentsError?.let { Text(stringResource(R.string.player_comments_error, it), color = Color(0xFFFFB4AB)) }
+                Text(stringResource(R.string.player_comments), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineSmall)
+                if (commentsLoading && comments.isEmpty()) Text(stringResource(R.string.player_comments_loading), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
+                commentsError?.let { Text(stringResource(R.string.player_comments_error, it), color = MaterialTheme.colorScheme.error) }
                 comments.forEachIndexed { index, (author, body) ->
-                    Column(Modifier.fillMaxWidth().background(if (commentsPanelRow == index) Color(0x663F3F3F) else Color.Transparent, RoundedCornerShape(8.dp)).padding(10.dp)) {
-                        Text(author.ifBlank { stringResource(R.string.channel_unknown) }, color = Color.White, style = MaterialTheme.typography.labelLarge)
+                    Column(Modifier.fillMaxWidth().background(if (commentsPanelRow == index) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, RoundedCornerShape(8.dp)).padding(10.dp)) {
+                        Text(author.ifBlank { stringResource(R.string.channel_unknown) }, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(4.dp))
-                        Text(body, color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.bodyMedium)
+                        Text(body, color = MaterialTheme.colorScheme.onSurface.copy(alpha = .9f), style = MaterialTheme.typography.bodyMedium)
                     }
                 }
-                if (commentsTotal == 0 && !commentsLoading && commentsError == null) Text(stringResource(R.string.player_comments_empty), color = Color.White.copy(alpha = .75f))
-                if (comments.size < commentsTotal) TextButton(onClick = { loadMoreComments() }, modifier = Modifier.background(if (commentsPanelRow >= comments.size) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(8.dp))) { Text(stringResource(R.string.player_comments_more), color = Color.White) }
+                if (commentsTotal == 0 && !commentsLoading && commentsError == null) Text(stringResource(R.string.player_comments_empty), color = MaterialTheme.colorScheme.onSurface.copy(alpha = .75f))
+                if (comments.size < commentsTotal) TextButton(onClick = { loadMoreComments() }, modifier = Modifier.background(if (commentsPanelRow >= comments.size) MaterialTheme.colorScheme.secondary.copy(alpha = .32f) else Color.Transparent, RoundedCornerShape(8.dp))) { Text(stringResource(R.string.player_comments_more), color = MaterialTheme.colorScheme.onSurface) }
             }
         }
     }
@@ -1335,7 +1337,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
 @Composable private fun PlayerIconControl(icon: androidx.compose.ui.graphics.vector.ImageVector, description: String, caption: String, selected: Boolean = false, modifier: Modifier = Modifier, large: Boolean = false, onClick: () -> Unit) {
     Column(modifier, horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         IconButton(onClick = onClick, modifier = Modifier.size(if (large) 54.dp else 48.dp)
-            .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else Color.Transparent, RoundedCornerShape(12.dp))
             .semantics { contentDescription = description }) {
             Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(if (large) 30.dp else 23.dp))
         }
@@ -1346,7 +1348,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
 @Composable private fun PlayerLabelControl(label: String, description: String, caption: String, selected: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(modifier, horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
         TextButton(onClick = onClick, contentPadding = PaddingValues(0.dp), modifier = Modifier.size(48.dp)
-            .background(if (selected) Color(0xCCFF6D00) else Color.Transparent, RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else Color.Transparent, RoundedCornerShape(12.dp))
             .semantics { contentDescription = description }) {
             Text(label, color = Color.White, fontSize = 20.sp, maxLines = 1, softWrap = false)
         }

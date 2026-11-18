@@ -30,3 +30,9 @@
 
 -keepattributes Signature,*Annotation*
 -dontwarn org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement
+
+# ML Kit discovers these component registrars by class name and reflection at runtime.
+-keep class com.google.mlkit.common.internal.CommonComponentRegistrar { *; }
+-keep class com.google.mlkit.nl.translate.NaturalLanguageTranslateRegistrar { *; }
+-keep class com.google.mlkit.nl.languageid.internal.LanguageIdRegistrar { *; }
+-keep class com.google.mlkit.nl.languageid.bundled.internal.ThickLanguageIdRegistrar { *; }

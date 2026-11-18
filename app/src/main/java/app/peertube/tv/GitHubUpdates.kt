@@ -31,7 +31,7 @@ object GitHubUpdates {
             requestMethod = "GET"
             setRequestProperty("Accept", "application/vnd.github+json")
             setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-            setRequestProperty("User-Agent", "PeerTubeTV-Android")
+            setRequestProperty("User-Agent", "PeerIcheTV-Android")
             cacheEtag.takeIf { it.isFile }?.readText()?.takeIf(String::isNotBlank)?.let { setRequestProperty("If-None-Match", it) }
         }
         val json = try {
@@ -51,9 +51,13 @@ object GitHubUpdates {
         val version = release.get("tag_name")?.asString.orEmpty().removePrefix("v").removePrefix("V")
         if (version.isBlank() || compareVersions(version, installedVersion) <= 0) return null
         val assets = release.getAsJsonArray("assets") ?: return null
-        val asset = assets.map { it.asJsonObject }
-            .firstOrNull { it.get("name")?.asString?.equals("PeerTubeTV.apk", ignoreCase = true) == true }
-            ?: assets.map { it.asJsonObject }.firstOrNull { it.get("name")?.asString?.endsWith(".apk", true) == true }
+        val apkAssets = assets.map { it.asJsonObject }
+            .filter { it.get("name")?.asString?.endsWith(".apk", ignoreCase = true) == true }
+        val asset = apkAssets.firstOrNull { it.get("name")?.asString?.equals("PeerIcheTV.apk", ignoreCase = true) == true }
+            ?: apkAssets.firstOrNull { it.get("name")?.asString?.contains("universal", ignoreCase = true) == true }
+            ?: apkAssets.firstOrNull { it.get("name")?.asString?.equals("PeerTubeTV.apk", ignoreCase = true) == true }
+            ?: apkAssets.firstOrNull { it.get("name")?.asString?.contains("armeabi-v7a", ignoreCase = true) == true }
+            ?: apkAssets.firstOrNull()
             ?: return null
         val downloadUrl = asset.get("browser_download_url")?.asString?.takeIf(::isAllowedDownloadUrl) ?: return null
         val digest = normalizeSha256(asset.get("digest")?.takeUnless { it.isJsonNull }?.asString)
@@ -120,7 +124,7 @@ object GitHubUpdates {
                 readTimeout = readTimeoutMs
                 instanceFollowRedirects = false
                 requestMethod = "GET"
-                setRequestProperty("User-Agent", "PeerTubeTV-Android")
+                setRequestProperty("User-Agent", "PeerIcheTV-Android")
             }
             val code = connection.responseCode
             if (code !in 300..399) return connection

@@ -64,7 +64,6 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -129,40 +128,37 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pendingChannelNavigation = channelNavigationFrom(intent)
-        val colors = darkColorScheme(
-            primary = Color(0xFF8AB4F8),
-            secondary = Color(0xFF80CBC4),
-            background = Color(0xFF0B0F14),
-            surface = Color(0xFF141A22),
-            surfaceVariant = Color(0xFF202833)
-        )
         setContent {
-            MaterialTheme(colorScheme = colors) {
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    Home()
-                }
-                availableUpdate?.takeIf { updateMessage == null }?.let { release ->
-                    AlertDialog(
-                        onDismissRequest = { if (!updateBusy) availableUpdate = null },
-                        title = { Text(stringResource(R.string.update_available_title, release.version)) },
-                        text = { Text(release.notes.ifBlank { stringResource(R.string.update_available_message) }) },
-                        confirmButton = {
-                            TextButton(enabled = !updateBusy, onClick = { downloadAndInstall(release) }) {
-                                Text(if (updateBusy) stringResource(R.string.update_downloading) else stringResource(R.string.update_action))
+            val model: HomeModel = viewModel()
+            val theme = PeerIcheThemes.fromId(model.selectedTheme)
+            MaterialTheme(colorScheme = theme.colors) {
+                CompositionLocalProvider(LocalPeerIcheTheme provides theme) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Home(model)
+                    }
+                    availableUpdate?.takeIf { updateMessage == null }?.let { release ->
+                        AlertDialog(
+                            onDismissRequest = { if (!updateBusy) availableUpdate = null },
+                            title = { Text(stringResource(R.string.update_available_title, release.version)) },
+                            text = { Text(release.notes.ifBlank { stringResource(R.string.update_available_message) }) },
+                            confirmButton = {
+                                TextButton(enabled = !updateBusy, onClick = { downloadAndInstall(release) }) {
+                                    Text(if (updateBusy) stringResource(R.string.update_downloading) else stringResource(R.string.update_action))
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(enabled = !updateBusy, onClick = { availableUpdate = null }) { Text(stringResource(R.string.update_later)) }
                             }
-                        },
-                        dismissButton = {
-                            TextButton(enabled = !updateBusy, onClick = { availableUpdate = null }) { Text(stringResource(R.string.update_later)) }
-                        }
-                    )
-                }
-                updateMessage?.let { message ->
-                    AlertDialog(
-                        onDismissRequest = { updateMessage = null },
-                        title = { Text(stringResource(R.string.update_error_title)) },
-                        text = { Text(message) },
-                        confirmButton = { TextButton(onClick = { updateMessage = null }) { Text(stringResource(R.string.ok)) } }
-                    )
+                        )
+                    }
+                    updateMessage?.let { message ->
+                        AlertDialog(
+                            onDismissRequest = { updateMessage = null },
+                            title = { Text(stringResource(R.string.update_error_title)) },
+                            text = { Text(message) },
+                            confirmButton = { TextButton(onClick = { updateMessage = null }) { Text(stringResource(R.string.ok)) } }
+                        )
+                    }
                 }
             }
         }
@@ -363,7 +359,7 @@ class HomeModel : ViewModel() {
         private set
     var hiddenSections by mutableStateOf<Set<String>>(emptySet())
         private set
-    var selectedTheme by mutableStateOf("peertube")
+    var selectedTheme by mutableStateOf(PeerIcheThemes.GRAPHITE)
         private set
     var showSearchIcon by mutableStateOf(true)
         private set
@@ -551,7 +547,9 @@ class HomeModel : ViewModel() {
         seekStepSeconds = (prefs?.getInt("seekStepSeconds", 10) ?: 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10
         launchTab = prefs?.getString("launchTab", "home")?.takeIf { it in listOf("home", "popular", "live", "subscriptions", "channels", "recommendations", "instances", "history", "favorites") } ?: "home"
         hiddenSections = runCatching { PeerTubeGson.instance.fromJson<List<String>>(prefs?.getString("hiddenSections", "[]"), object : TypeToken<List<String>>() {}.type)?.toSet() ?: emptySet() }.getOrDefault(emptySet())
-        selectedTheme = prefs?.getString("selectedTheme", "peertube")?.takeIf { it in listOf("peertube", "turquoise", "gray", "red") } ?: "peertube"
+        val savedTheme = prefs?.getString("selectedTheme", PeerIcheThemes.GRAPHITE)
+        selectedTheme = PeerIcheThemes.migrateId(savedTheme)
+        if (savedTheme != selectedTheme) prefs?.edit()?.putString("selectedTheme", selectedTheme)?.apply()
         showSearchIcon = prefs?.getBoolean("showSearchIcon", true) ?: true
         uiScale = (prefs?.getFloat("uiScale", 0.85f) ?: 0.85f).coerceIn(0.85f, 1.4f)
         gridScale = (prefs?.getFloat("gridScale", 0.85f) ?: 0.85f).coerceIn(0.5f, 1.5f)
@@ -895,7 +893,7 @@ class HomeModel : ViewModel() {
     fun updateSeekStep(seconds: Int) { seekStepSeconds = seconds.takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10; save() }
     fun updateLaunchTab(tab: String) { launchTab = tab; if (tab in hiddenSections) hiddenSections = hiddenSections - tab; save() }
     fun toggleSection(key: String, shown: Boolean) { hiddenSections = if (shown) hiddenSections - key else hiddenSections + key; if (!shown && tab == key) tab = launchTab; save() }
-    fun updateTheme(theme: String) { selectedTheme = theme.takeIf { it in listOf("peertube", "turquoise", "gray", "red") } ?: "peertube"; save() }
+    fun updateTheme(theme: String) { selectedTheme = PeerIcheThemes.migrateId(theme); save() }
     fun updateShowSearchIcon(show: Boolean) { showSearchIcon = show; save() }
     fun updateUiScale(scale: Float) { uiScale = scale.coerceIn(0.85f, 1.4f); save() }
     fun updateGridScale(scale: Float) { gridScale = scale.coerceIn(0.5f, 1.5f); save() }
@@ -1074,12 +1072,6 @@ class HomeModel : ViewModel() {
         else -> items.sortedByDescending { it.publishedAt ?: "" }
     }
 
-    fun colorScheme(): androidx.compose.material3.ColorScheme = when (selectedTheme) {
-        "turquoise" -> darkColorScheme(primary = Color(0xFF4DD0C5), secondary = Color(0xFF80CBC4), background = Color(0xFF071719), surface = Color(0xFF102326), surfaceVariant = Color(0xFF18383B))
-        "gray" -> darkColorScheme(primary = Color(0xFFD0D5DA), secondary = Color(0xFFAAB3BB), background = Color(0xFF0B0F14), surface = Color(0xFF171A21), surfaceVariant = Color(0xFF252A32))
-        "red" -> darkColorScheme(primary = Color(0xFFFF6B65), secondary = Color(0xFFFFA198), background = Color(0xFF170B0B), surface = Color(0xFF261414), surfaceVariant = Color(0xFF3A2020))
-        else -> darkColorScheme(primary = Color(0xFFF36C21), secondary = Color(0xFFFFA05E), background = Color(0xFF0B0F14), surface = Color(0xFF171A21), surfaceVariant = Color(0xFF27231F))
-    }
     fun syncWatchProgress() {
         watchProgressMs.clear()
         watchProgressMs.putAll(appContext?.let { PlaybackStateStore.progressSnapshot(it) }.orEmpty())
@@ -1686,10 +1678,8 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
 @OptIn(ExperimentalFoundationApi::class)
 @Composable fun Home(m: HomeModel = viewModel()) {
     val density = LocalDensity.current
-    MaterialTheme(colorScheme = m.colorScheme()) {
-        CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density * m.uiScale, density.fontScale)) {
-            HomeContent(m)
-        }
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(density.density * m.uiScale, density.fontScale)) {
+        HomeContent(m)
     }
 }
 
@@ -2137,7 +2127,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         "favorites" -> Icons.Filled.Favorite
                         else -> Icons.Filled.Settings
                     }
-                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = Color.White, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
+                    NavigationDrawerItem(label = { Text(stringResource(label), style = selectedStyle, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (navFocused) Modifier.basicMarquee(velocity = 30.dp * m.tickerSpeed) else Modifier) }, selected = isSelected, icon = { Icon(icon, contentDescription = null, tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }, shape = RectangleShape, colors = NavigationDrawerItemDefaults.colors(selectedContainerColor = Color.Transparent, unselectedContainerColor = Color.Transparent, selectedTextColor = MaterialTheme.colorScheme.onSurface, selectedIconColor = MaterialTheme.colorScheme.primary), onClick = { navigateToSection(key, true) }, modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).scale(if (navFocused) 1.08f else 1f).onFocusChanged {
                         navFocused = it.isFocused
                         if (it.isFocused) {
                             focusedMenuSectionKey = key
@@ -2161,7 +2151,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
         Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = if (menuExpanded) 20.dp else 76.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
                 if (m.showSearchIcon) {
-                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, Color.White, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
+                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, MaterialTheme.colorScheme.secondary, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
                     SearchGlyph()
                 }
                 }
@@ -2177,8 +2167,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 Column(horizontalAlignment = Alignment.End) { LocalDateTime(m.clock24Hour) }
                 Spacer(Modifier.width(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.height(44.dp)) {
-                    Image(painter = painterResource(R.drawable.peertube_mark), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size(36.dp))
-                    Image(painter = painterResource(R.drawable.peertube_wordmark), contentDescription = "PeerTube", contentScale = ContentScale.Fit, colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface), modifier = Modifier.width(124.dp).height(34.dp))
+                    Image(painter = painterResource(LocalPeerIcheTheme.current.logoResource), contentDescription = stringResource(R.string.app_name), contentScale = ContentScale.Fit, modifier = Modifier.width(176.dp).height(38.dp))
                 }
             }
             Spacer(Modifier.height(24.dp))
@@ -2240,7 +2229,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             val freshApiCheck = discovered.apiCheckedAt > 0L && now - discovered.apiCheckedAt <= 24L * 60L * 60L * 1000L
                             val apiMarkColor = when {
                                 freshApiCheck && discovered.apiStatus == "available" -> Color(0xFF4CAF50)
-                                freshApiCheck && discovered.apiStatus == "unavailable" -> Color(0xFFF44336)
+                                freshApiCheck && discovered.apiStatus == "unavailable" -> MaterialTheme.colorScheme.error
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
                             Card(
@@ -3216,8 +3205,13 @@ private fun SettingsDashboard(
                                 val speedLabel = "${String.format(Locale.ROOT, "%.1f", model.tickerSpeed).removeSuffix(".0")}x"
                                 SettingsChoice(stringResource(R.string.ticker_speed), speedLabel, (2..16).map { n -> val speed = n / 2f; "${speed}" to "${String.format(Locale.ROOT, "%.1f", speed).removeSuffix(".0")}x" }) { model.updateTickerSpeed(it.toFloat()) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.clock_24_hour), Modifier.weight(1f)); Switch(model.clock24Hour, model::updateClock24Hour) }
-                                val themeLabel = stringResource(when (model.selectedTheme) { "turquoise" -> R.string.theme_turquoise; "gray" -> R.string.theme_gray; "red" -> R.string.theme_red; else -> R.string.theme_peertube })
-                                SettingsChoice(stringResource(R.string.color_theme), themeLabel, listOf("peertube" to stringResource(R.string.theme_peertube), "turquoise" to stringResource(R.string.theme_turquoise), "gray" to stringResource(R.string.theme_gray), "red" to stringResource(R.string.theme_red))) { model.updateTheme(it) }
+                                val themeLabel = stringResource(when (model.selectedTheme) { PeerIcheThemes.LIGHT -> R.string.theme_light; PeerIcheThemes.PEERTUBE -> R.string.theme_peertube; PeerIcheThemes.BLUE -> R.string.theme_blue; else -> R.string.theme_graphite })
+                                SettingsChoice(stringResource(R.string.color_theme), themeLabel, listOf(
+                                    PeerIcheThemes.GRAPHITE to stringResource(R.string.theme_graphite),
+                                    PeerIcheThemes.LIGHT to stringResource(R.string.theme_light),
+                                    PeerIcheThemes.PEERTUBE to stringResource(R.string.theme_peertube),
+                                    PeerIcheThemes.BLUE to stringResource(R.string.theme_blue),
+                                )) { model.updateTheme(it) }
                                 SettingsChoice(stringResource(R.string.ui_scale), "${String.format(Locale.ROOT, "%.2f", model.uiScale)}x", (85..140 step 5).map { it / 100f }.map { it.toString() to "${String.format(Locale.ROOT, "%.2f", it)}x" }) { model.updateUiScale(it.toFloat()) }
                                 SettingsChoice(stringResource(R.string.grid_scale), "${String.format(Locale.ROOT, "%.2f", model.gridScale)}x", (50..150 step 5).map { it / 100f }.map { it.toString() to "${String.format(Locale.ROOT, "%.2f", it)}x" }) { model.updateGridScale(it.toFloat()) }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(stringResource(R.string.navigation_sounds), Modifier.weight(1f)); Switch(model.navigationSounds, model::updateNavigationSounds) }
@@ -3508,8 +3502,8 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
                 .combinedClickable(onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen() }, onLongClick = showContextMenu),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (focused) Color.White else MaterialTheme.colorScheme.surface,
-                contentColor = if (focused) Color.Black else MaterialTheme.colorScheme.onSurface
+                containerColor = if (focused) LocalPeerIcheTheme.current.focusedVideoBackground else MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurface
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, focusedElevation = if (focused) 8.dp else 1.dp)
         ) {
@@ -3517,9 +3511,9 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
                 VideoThumbnail(video, server, Modifier.fillMaxWidth().aspectRatio(16f / 9f), progress)
                 Column(Modifier.fillMaxWidth().height((titleLines * 23 + 80).dp).padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     TranslatedVideoMetadataText(video.name, style = MaterialTheme.typography.titleMedium, maxLines = titleLines, minLines = titleLines, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = if (focused) Modifier.basicMarquee(velocity = 30.dp * tickerSpeed) else Modifier)
-                    Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                    Text(stringResource(R.string.video_views, video.views.toString()), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    PublishedDate(video.publishedAt, if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, color = if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(stringResource(R.string.video_views, video.views.toString()), style = MaterialTheme.typography.bodySmall, color = if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    PublishedDate(video.publishedAt, if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -3634,9 +3628,10 @@ private fun VideoContextMenu(
             }
         }
         if (progress > 0f) {
+            val progressColor = MaterialTheme.colorScheme.primary
             Canvas(Modifier.fillMaxWidth().height(3.dp).align(Alignment.BottomStart)) {
                 drawLine(Color(0x99FFFFFF), Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = size.height)
-                drawLine(Color(0xFFF36C21), Offset(0f, size.height / 2), Offset(size.width * progress.coerceIn(0f, 1f), size.height / 2), strokeWidth = size.height)
+                drawLine(progressColor, Offset(0f, size.height / 2), Offset(size.width * progress.coerceIn(0f, 1f), size.height / 2), strokeWidth = size.height)
             }
         }
         if (video.duration > 0) {
@@ -3760,8 +3755,8 @@ internal fun formatPublishedDate(value: String?): String? {
                             .remoteCenterPress({ onOpen(video) }, showContextMenu, contextMenuHoldSeconds),
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (focused) Color.White else MaterialTheme.colorScheme.surface,
-                            contentColor = if (focused) Color.Black else MaterialTheme.colorScheme.onSurface
+                            containerColor = if (focused) LocalPeerIcheTheme.current.focusedVideoBackground else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurface
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp, focusedElevation = if (focused) 8.dp else 1.dp)
                     ) {
@@ -3779,7 +3774,7 @@ internal fun formatPublishedDate(value: String?): String? {
                                 )
                                 Text(video.channel?.displayName ?: video.account?.displayName ?: stringResource(R.string.channel_unknown), style = MaterialTheme.typography.bodySmall, maxLines = 1)
                                 val date = formatPublishedDate(video.publishedAt) ?: stringResource(R.string.shelf_date_unknown)
-                                Text(stringResource(R.string.shelf_video_stats, video.views.toString(), date), style = MaterialTheme.typography.bodySmall, color = if (focused) Color.DarkGray else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                                Text(stringResource(R.string.shelf_video_stats, video.views.toString(), date), style = MaterialTheme.typography.bodySmall, color = if (focused) LocalPeerIcheTheme.current.focusedVideoForeground else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             }
                         }
                     }
