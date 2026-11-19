@@ -130,6 +130,14 @@
     <string name="update_checksum_mismatch">The downloaded APK failed the SHA-256 check.</string>
     <string name="settings_accounts">Accounts</string>
     <string name="account_server">PeerTube server (HTTPS)</string>
+    <string name="account_keyboard_input">Input</string>
+    <string name="account_keyboard_url">https://</string>
+    <string name="account_keyboard_clear">Clear</string>
+    <string name="account_keyboard_letters">Letters</string>
+    <string name="account_keyboard_symbols">Symbols</string>
+    <string name="account_keyboard_space">Space</string>
+    <string name="account_keyboard_done">Done</string>
+    <string name="use_built_in_tv_keyboard">Use built-in TV keyboard</string>
     <string name="account_username">Username</string>
     <string name="account_password">Password</string>
     <string name="account_otp">Two-factor code</string>

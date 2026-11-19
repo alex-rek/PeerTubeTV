@@ -1,16 +1,12 @@
 package app.peertube.tv
 
-import android.text.InputType
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -39,7 +34,6 @@ internal fun PeerTubeAccountSettingsPanel(model: HomeModel, onUseServer: (String
     var password by remember { mutableStateOf("") }
     var otp by remember { mutableStateOf("") }
     var showOtp by remember { mutableStateOf(false) }
-    var showPassword by remember { mutableStateOf(false) }
     var showForm by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -103,16 +97,12 @@ internal fun PeerTubeAccountSettingsPanel(model: HomeModel, onUseServer: (String
     } else {
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
         Text(stringResource(R.string.account_sign_in), style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(server, { server = it; error = null }, enabled = !busy, singleLine = true,
-            label = { Text(stringResource(R.string.account_server)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(username, { username = it; error = null }, enabled = !busy, singleLine = true,
-            label = { Text(stringResource(R.string.account_username)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text), modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it; error = null }, enabled = !busy, singleLine = true,
-            label = { Text(stringResource(R.string.account_password)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = { IconButton(onClick = { showPassword = !showPassword }) { Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, contentDescription = null) } }, modifier = Modifier.fillMaxWidth())
-        if (showOtp) OutlinedTextField(otp, { otp = it; error = null }, enabled = !busy, singleLine = true,
-            label = { Text(stringResource(R.string.account_otp)) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword), modifier = Modifier.fillMaxWidth())
+        TvRemoteTextField(server, { server = it; error = null }, stringResource(R.string.account_server), enabled = !busy, keyboardLayout = TvKeyboardLayout.URL)
+        TvRemoteTextField(username, { username = it; error = null }, stringResource(R.string.account_username), enabled = !busy)
+        TvRemoteTextField(password, { password = it; error = null }, stringResource(R.string.account_password), enabled = !busy,
+            keyboardLayout = TvKeyboardLayout.PASSWORD, visualTransformation = PasswordVisualTransformation())
+        if (showOtp) TvRemoteTextField(otp, { otp = it.filter(Char::isDigit).take(8); error = null }, stringResource(R.string.account_otp), enabled = !busy,
+            keyboardLayout = TvKeyboardLayout.NUMBER)
         else TextButton(enabled = !busy, onClick = { showOtp = true }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.account_otp_prompt)) }
         Button(enabled = !busy && server.isNotBlank() && username.isNotBlank() && password.isNotEmpty(), onClick = {
             launchAction {

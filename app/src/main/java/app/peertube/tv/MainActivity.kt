@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -1737,9 +1738,16 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val pendingMenuFocus = remember { arrayOfNulls<Pair<String, Job>>(1) }
     val homeFirstCardFocusRequester = remember { FocusRequester() }
     val homeLatestFirstCardFocusRequester = remember { FocusRequester() }
+    val homeGridRestoreFocusRequester = remember { FocusRequester() }
+    val homeRecommendationRestoreFocusRequester = remember { FocusRequester() }
+    val homeLatestRestoreFocusRequester = remember { FocusRequester() }
     val sectionFirstFocusRequester = remember { FocusRequester() }
+    val sectionRestoreFocusRequester = remember { FocusRequester() }
     val firstSearchResultFocusRequester = remember { FocusRequester() }
+    val searchRestoreFocusRequester = remember { FocusRequester() }
+    val lastFocusedCardBySection = remember { mutableStateMapOf<String, String>() }
     var focusedMenuSectionKey by remember { mutableStateOf("home") }
+    var collapsedMenuItemFocused by remember { mutableStateOf(false) }
     var sectionFocusPending by remember { mutableStateOf(false) }
     var searchResultFocusPending by remember { mutableStateOf(false) }
     var returnSearchFocusPending by remember { mutableStateOf(false) }
@@ -1771,6 +1779,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
     val updateFocusedVideoMenu: (String, (() -> Unit)?, (() -> Unit)?) -> Unit = { videoId, openMenu, _ ->
         if (openMenu != null) {
             focusedVideoMenu = videoId to openMenu
+            lastFocusedCardBySection[m.tab] = videoId
         } else if (focusedVideoMenu?.first == videoId) {
             focusedVideoMenu = null
         }
@@ -1833,14 +1842,26 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             returnSearchFocusPending = false
         }
     }
-    LaunchedEffect(menuExpanded, sectionFocusPending, m.tab, m.videos.size, m.homePageVideos.size, m.recommendations.size, m.popularVideos.size, m.liveVideos.size, m.subscriptionVideos.size, m.instances.size) {
+    LaunchedEffect(menuExpanded, sectionFocusPending, m.tab, m.videos.size, m.homePageVideos.size, m.recommendations.size, m.popularVideos.size, m.liveVideos.size, m.subscriptionVideos.size, m.instances.size, lastFocusedCardBySection[m.tab], m.homePageDisplayMode) {
         if (!menuExpanded && sectionFocusPending) {
-            kotlinx.coroutines.delay(100)
-            val target = when (m.tab) {
-                "home" -> homeFirstCardFocusRequester
+            kotlinx.coroutines.delay(280)
+            val rememberedId = lastFocusedCardBySection[m.tab]
+            val target = when {
+                m.tab == "home" && m.homePageDisplayMode == "recommended" && rememberedId != null && m.recommendations.any { it.uuid == rememberedId } -> homeRecommendationRestoreFocusRequester
+                m.tab == "home" && m.homePageDisplayMode == "recommended" && rememberedId != null && m.videos.any { it.uuid == rememberedId } -> homeLatestRestoreFocusRequester
+                m.tab == "home" && m.homePageDisplayMode != "recommended" && rememberedId != null && m.homePageVideos.any { it.uuid == rememberedId } -> homeGridRestoreFocusRequester
+                m.tab == "sepia" && rememberedId != null && m.videos.any { it.uuid == rememberedId } -> searchRestoreFocusRequester
+                rememberedId != null -> sectionRestoreFocusRequester
+                m.tab == "home" -> if (m.recommendations.isEmpty()) homeLatestFirstCardFocusRequester else homeFirstCardFocusRequester
                 else -> sectionFirstFocusRequester
             }
-            if (runCatching { target.requestFocus() }.getOrDefault(false)) sectionFocusPending = false
+            val focused = runCatching { target.requestFocus() }.getOrDefault(false)
+            if (!focused) {
+                val fallback = if (m.tab == "home") {
+                    if (m.recommendations.isEmpty()) homeLatestFirstCardFocusRequester else homeFirstCardFocusRequester
+                } else if (m.tab == "sepia") firstSearchResultFocusRequester else sectionFirstFocusRequester
+                if (runCatching { fallback.requestFocus() }.getOrDefault(false)) sectionFocusPending = false
+            } else sectionFocusPending = false
         }
     }
     BackHandler {
@@ -2103,6 +2124,10 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     sectionFocusPending = true
                     true
                 }
+                event.type == KeyEventType.KeyDown && !menuExpanded && collapsedMenuItemFocused && event.key == Key.DirectionRight -> {
+                    sectionFocusPending = true
+                    true
+                }
                 event.type == KeyEventType.KeyDown && menuExpanded && event.key == Key.DirectionUp && focusedMenuSectionKey == "home" && m.showSearchIcon -> {
                     menuExpanded = false
                     pendingMenuFocus[0]?.second?.cancel()
@@ -2192,6 +2217,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         IconButton(onClick = { navigateToSection(key, false) }, modifier = Modifier.size(44.dp)
                             .onFocusChanged {
                                 railFocused = it.isFocused
+                                collapsedMenuItemFocused = it.isFocused
                                 if (it.isFocused) {
                                     focusedMenuSectionKey = key
                                     pendingMenuFocus[0]?.second?.cancel()
@@ -2215,27 +2241,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
             }
         }
         Column(Modifier.weight(1f).focusProperties { canFocus = !menuExpanded }.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Start) {
-                if (m.showSearchIcon) {
-                IconButton(onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" }, modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester).focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }.onFocusChanged { searchButtonFocused = it.isFocused }.then(if (searchButtonFocused) Modifier.border(3.dp, MaterialTheme.colorScheme.secondary, CircleShape).padding(3.dp) else Modifier).background(MaterialTheme.colorScheme.primary, CircleShape)) {
-                    SearchGlyph()
-                }
-                }
-                if (accountState.active != null) {
-                    val activeAccount = accountState.active!!
-                    IconButton(onClick = { settingsCategory = "accounts"; settingsSubpage = null; settingsOverlay = true }, modifier = Modifier.padding(start = if (m.showSearchIcon) 18.dp else 0.dp).size(44.dp)) {
-                        if (!activeAccount.avatar.isNullOrBlank()) AsyncImage(activeAccount.avatar, contentDescription = activeAccount.displayName,
-                            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentScale = ContentScale.Crop)
-                        else Icon(Icons.Filled.AccountCircle, contentDescription = activeAccount.displayName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxSize())
-                    }
-                }
-                Spacer(Modifier.weight(1f))
-                Column(horizontalAlignment = Alignment.End) { LocalDateTime(m.clock24Hour) }
-                Spacer(Modifier.width(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.height(44.dp)) {
-                    Image(painter = painterResource(LocalPeerIcheTheme.current.logoResource), contentDescription = stringResource(R.string.app_name), contentScale = ContentScale.Fit, modifier = Modifier.width(176.dp).height(38.dp))
-                }
-            }
+            Spacer(Modifier.height(46.dp))
             Spacer(Modifier.height(24.dp))
             if (m.tab == "instances") {
                 Text(stringResource(R.string.settings_server), style = MaterialTheme.typography.headlineSmall)
@@ -2468,9 +2474,10 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     ) {
                         Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.voice_search), tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp))
                     }
-                    OutlinedTextField(
+                    TvRemoteTextField(
                         value = searchText,
                         onValueChange = { searchText = it; if (it.isBlank()) hasSearchSubmitted = false },
+                        label = stringResource(R.string.search_peertube),
                         modifier = Modifier.weight(1f).onPreviewKeyEvent { event ->
                             if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && searchText.isNotBlank()) {
                                 searchResultFocusPending = true
@@ -2479,7 +2486,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                         },
                         singleLine = true,
                         textStyle = MaterialTheme.typography.bodyLarge,
-                        label = { Text(stringResource(R.string.search_peertube), style = MaterialTheme.typography.labelSmall) }
+                        labelStyle = MaterialTheme.typography.labelSmall
                     )
                 }
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 1.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -2498,6 +2505,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     }
                 }
                 val sortedSearchVideos = remember(m.videos, m.videoSortMode) { m.sortVideos(m.videos) }
+                val savedSearchVideoId = lastFocusedCardBySection["sepia"]
                 m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (m.isSearching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
                 if (m.isVerifyingAvailability) Text(stringResource(R.string.availability_checking), style = MaterialTheme.typography.bodySmall)
@@ -2510,13 +2518,21 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 if (m.searchSourceErrors.isNotEmpty() && m.videos.isEmpty()) Text(stringResource(R.string.search_source_errors, m.searchSourceErrors.entries.joinToString { (source, detail) -> "${source.key}: $detail" }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, maxLines = 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 else if (hasSearchSubmitted && m.videos.isEmpty() && m.query.isNotBlank() && m.error == null) Text(stringResource(R.string.search_empty), modifier = Modifier.padding(16.dp))
                 if (hasSearchSubmitted && m.gridMode) {
-                    LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) firstSearchResultFocusRequester else null, if (index == 0) searchButtonFocusRequester else null) }
+                    val searchGridState = rememberLazyGridState()
+                    LaunchedEffect(sectionFocusPending, savedSearchVideoId, sortedSearchVideos.size) {
+                        if (sectionFocusPending) savedSearchVideoId?.let { id -> sortedSearchVideos.indexOfFirst { it.uuid == id }.takeIf { it >= 0 }?.let { searchGridState.scrollToItem(it) } }
+                    }
+                    LazyVerticalGrid(state = searchGridState, columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) firstSearchResultFocusRequester else null, if (index == 0) searchButtonFocusRequester else null, searchRestoreFocusRequester, savedSearchVideoId) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 } else if (hasSearchSubmitted) {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) firstSearchResultFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
+                    val searchListState = rememberLazyListState()
+                    LaunchedEffect(sectionFocusPending, savedSearchVideoId, sortedSearchVideos.size) {
+                        if (sectionFocusPending) savedSearchVideoId?.let { id -> sortedSearchVideos.indexOfFirst { it.uuid == id }.takeIf { it >= 0 }?.let { searchListState.scrollToItem(it) } }
+                    }
+                    LazyColumn(state = searchListState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        itemsIndexed(sortedSearchVideos, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, sortedSearchVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) firstSearchResultFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null, preferredFocusRequester = searchRestoreFocusRequester, preferredFocusVideoId = savedSearchVideoId) }
                         if (m.searchHasMore) item { TextButton(onClick = { m.searchSepia(m.query, searchSort, searchCategory.toIntOrNull(), when(searchDuration){"medium"->240;"long"->1200;else->null}, when(searchDuration){"short"->240;"medium"->1200;else->null}, searchLiveOnly, page = m.searchNextPage, append = true) }, enabled = !m.isSearching, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.search_more)) } }
                     }
                 }
@@ -2542,6 +2558,7 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     onCheckForUpdates = { (context as? MainActivity)?.checkForUpdates() }
                 )
             } else if (m.tab == "home") {
+                val savedHomeVideoId = lastFocusedCardBySection["home"]
                 val customHomeTitle = stringResource(when (m.homePageDisplayMode) {
                     "interests" -> R.string.home_mode_interests
                     "server" -> R.string.home_mode_server
@@ -2559,6 +2576,9 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                 watchProgressMs = m.watchProgressMs,
                                 tickerSpeed = m.tickerSpeed,
                                 firstCardFocusRequester = homeFirstCardFocusRequester,
+                                preferredFocusRequester = homeRecommendationRestoreFocusRequester,
+                                preferredFocusVideoId = savedHomeVideoId,
+                                restoreFocusPending = sectionFocusPending,
                                 downFocusRequester = homeLatestFirstCardFocusRequester,
                                 upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
@@ -2583,6 +2603,9 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                             watchProgressMs = m.watchProgressMs,
                             tickerSpeed = m.tickerSpeed,
                                 firstCardFocusRequester = if (m.recommendations.isEmpty()) homeFirstCardFocusRequester else homeLatestFirstCardFocusRequester,
+                                preferredFocusRequester = homeLatestRestoreFocusRequester,
+                                preferredFocusVideoId = savedHomeVideoId,
+                                restoreFocusPending = sectionFocusPending,
                                 upFocusRequester = searchButtonFocusRequester,
                                 titleLines = m.videoTitleLines,
                             onOpen = { video -> openVideoInQueue(video, m.sortVideos(m.videos)) },
@@ -2601,6 +2624,10 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 } else {
                     val sortedHomePageVideos = remember(m.homePageVideos, m.videoSortMode) { m.sortVideos(m.homePageVideos) }
                     val homeGridState = rememberLazyGridState()
+                        val homeVideoStartIndex = 1 + (if (m.isLoadingHomePage) 1 else 0) + (if (!m.homePageError.isNullOrBlank()) 1 else 0)
+                        LaunchedEffect(sectionFocusPending, savedHomeVideoId, sortedHomePageVideos.size, homeVideoStartIndex) {
+                            if (sectionFocusPending) savedHomeVideoId?.let { id -> sortedHomePageVideos.indexOfFirst { it.uuid == id }.takeIf { it >= 0 }?.let { homeGridState.scrollToItem(homeVideoStartIndex + it) } }
+                        }
                     BoxWithConstraints(Modifier.weight(1f)) {
                         val spacing = 14.dp
                         val minCardWidth = (240.dp * m.gridScale).coerceIn(180.dp, 360.dp)
@@ -2654,7 +2681,9 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                                     onExcludeRecommendation = { m.excludeFromRecommendations(video) },
                                     onMarkWatched = { m.markRecommendationWatched(video) },
                                     firstCardFocusRequester = if (index == 0) homeFirstCardFocusRequester else null,
-                                    upFocusRequester = if (index < columns) searchButtonFocusRequester else null
+                                    upFocusRequester = if (index < columns) searchButtonFocusRequester else null,
+                                    preferredFocusRequester = homeGridRestoreFocusRequester,
+                                    preferredFocusVideoId = savedHomeVideoId
                                 )
                             }
                             if (m.isLoadingMoreHomePage) {
@@ -2696,28 +2725,46 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                     }
                 }
                 val rows = m.sortVideos(when(m.tab) { "popular" -> m.popularVideos; "history" -> m.history.toList(); "favorites" -> m.favorites.toList(); "recommendations" -> m.recommendations; "subscriptions" -> m.subscriptionVideos; "live" -> m.liveVideos; "channel" -> m.channelVideos; else -> m.videos })
+                val savedSectionVideoId = lastFocusedCardBySection[m.tab]
                 m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (m.tab == "recommendations" && rows.isEmpty() && !m.isLoadingRecommendations && m.error == null) Text(stringResource(R.string.recommendations_empty), modifier = Modifier.padding(16.dp))
                 if (m.tab == "live") {
-                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
+                    val liveListState = rememberLazyListState()
+                    LaunchedEffect(sectionFocusPending, savedSectionVideoId, m.liveVideos, m.recentlyEndedLiveVideos) {
+                        if (sectionFocusPending && savedSectionVideoId != null) {
+                            val liveIndex = m.liveVideos.indexOfFirst { it.uuid == savedSectionVideoId }
+                            val endedIndex = m.recentlyEndedLiveVideos.indexOfFirst { it.uuid == savedSectionVideoId }
+                            if (liveIndex >= 0) liveListState.scrollToItem(if (m.liveVideos.isNotEmpty()) liveIndex + 1 else liveIndex)
+                            else if (endedIndex >= 0) liveListState.scrollToItem((if (m.liveVideos.isNotEmpty()) m.liveVideos.size + 1 else 0) + endedIndex + 1)
+                        }
+                    }
+                    LazyColumn(Modifier.weight(1f), state = liveListState, verticalArrangement = Arrangement.spacedBy(18.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
                         if (m.liveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_now_title), style = MaterialTheme.typography.titleLarge) }
-                        itemsIndexed(m.liveVideos, key = { _, video -> "live-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
+                        itemsIndexed(m.liveVideos, key = { _, video -> "live-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.liveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = when (video.state?.id) { 4 -> stringResource(R.string.live_status_waiting); 5 -> stringResource(R.string.live_status_ended); else -> stringResource(R.string.live_status_on_air) }, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null, preferredFocusRequester = sectionRestoreFocusRequester, preferredFocusVideoId = savedSectionVideoId) }
                         }
                         if (m.recentlyEndedLiveVideos.isNotEmpty()) {
                             item { Text(stringResource(R.string.live_recent_title), style = MaterialTheme.typography.titleLarge) }
-                            itemsIndexed(m.recentlyEndedLiveVideos, key = { _, video -> "ended-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (m.liveVideos.isEmpty() && index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (m.liveVideos.isEmpty() && index == 0) searchButtonFocusRequester else null) }
+                            itemsIndexed(m.recentlyEndedLiveVideos, key = { _, video -> "ended-${video.uuid}" }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, m.recentlyEndedLiveVideos) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, statusLabel = stringResource(R.string.live_status_ended), onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (m.liveVideos.isEmpty() && index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (m.liveVideos.isEmpty() && index == 0) searchButtonFocusRequester else null, preferredFocusRequester = sectionRestoreFocusRequester, preferredFocusVideoId = savedSectionVideoId) }
                         }
                     }
                 } else if (m.tab == "popular" && rows.isEmpty()) {
                     // Loading, empty-state, or error are rendered with the section heading above.
                 } else if (m.gridMode) {
-                    LazyVerticalGrid(columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) sectionFirstFocusRequester else null, if (index == 0) searchButtonFocusRequester else null) }
+                    val sectionGridState = rememberLazyGridState()
+                    LaunchedEffect(sectionFocusPending, savedSectionVideoId, rows) {
+                        if (sectionFocusPending && savedSectionVideoId != null) rows.indexOfFirst { it.uuid == savedSectionVideoId }.takeIf { it >= 0 }?.let { sectionGridState.scrollToItem(it) }
+                    }
+                    LazyVerticalGrid(state = sectionGridState, columns = GridCells.Adaptive(minSize = (240.dp * m.gridScale).coerceIn(120.dp, 360.dp)), contentPadding = PaddingValues(bottom = 20.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoGridCard(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), m.videoTitleLines, m.tickerSpeed, { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, { m.excludeFromRecommendations(video) }, { m.markRecommendationWatched(video) }, if (index == 0) sectionFirstFocusRequester else null, if (index == 0) searchButtonFocusRequester else null, sectionRestoreFocusRequester, savedSectionVideoId) }
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null) }
+                    val sectionListState = rememberLazyListState()
+                    LaunchedEffect(sectionFocusPending, savedSectionVideoId, rows) {
+                        if (sectionFocusPending && savedSectionVideoId != null) rows.indexOfFirst { it.uuid == savedSectionVideoId }.takeIf { it >= 0 }?.let { sectionListState.scrollToItem(it) }
+                    }
+                    LazyColumn(state = sectionListState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        itemsIndexed(rows, key = { _, video -> video.uuid }) { index, video -> VideoListRow(video, m.server, m.watchProgressFraction(video), video.uuid in m.favoriteIds, m.isSubscribed(video), { openVideoInQueue(video, rows) }, { toggleFavorite(video) }, { m.toggleSubscription(video) }, { openChannelVideos(video) }, updateFocusedVideoMenu, m.contextMenuHoldSeconds, onExcludeRecommendation = { m.excludeFromRecommendations(video) }, onMarkWatched = { m.markRecommendationWatched(video) }, firstCardFocusRequester = if (index == 0) sectionFirstFocusRequester else null, upFocusRequester = if (index == 0) searchButtonFocusRequester else null, preferredFocusRequester = sectionRestoreFocusRequester, preferredFocusVideoId = savedSectionVideoId) }
                     }
                 }
             }
@@ -2788,6 +2835,38 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 dismissButton = { TextButton(onClick = { clearHistoryPeriodDialog = false }) { Text(stringResource(R.string.cancel)) } }
             )
         }
+    }
+    Row(
+        Modifier.align(Alignment.TopStart).padding(start = 80.dp, end = 20.dp, top = 4.dp).fillMaxWidth().zIndex(10f)
+            .focusProperties { canFocus = !menuExpanded },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Start
+    ) {
+        if (m.showSearchIcon) {
+            IconButton(
+                onClick = { searchText = m.query; hasSearchSubmitted = false; m.tab = "sepia" },
+                modifier = Modifier.size(46.dp).focusRequester(searchButtonFocusRequester)
+                    .focusProperties { if (m.tab == "home") down = homeFirstCardFocusRequester else if (m.tab != "sepia") down = sectionFirstFocusRequester }
+                    .onFocusChanged { searchButtonFocused = it.isFocused }
+                    .then(if (searchButtonFocused) Modifier.border(3.dp, MaterialTheme.colorScheme.secondary, CircleShape).padding(3.dp) else Modifier)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+            ) { SearchGlyph() }
+        }
+        if (accountState.active != null) {
+            val activeAccount = accountState.active!!
+            IconButton(
+                onClick = { settingsCategory = "accounts"; settingsSubpage = null; settingsOverlay = true },
+                modifier = Modifier.padding(start = if (m.showSearchIcon) 18.dp else 0.dp).size(44.dp)
+            ) {
+                if (!activeAccount.avatar.isNullOrBlank()) AsyncImage(activeAccount.avatar, contentDescription = activeAccount.displayName,
+                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentScale = ContentScale.Crop)
+                else Icon(Icons.Filled.AccountCircle, contentDescription = activeAccount.displayName, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.fillMaxSize())
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Column(horizontalAlignment = Alignment.End) { LocalDateTime(m.clock24Hour) }
+        Spacer(Modifier.width(14.dp))
+        Image(painter = painterResource(LocalPeerIcheTheme.current.logoResource), contentDescription = stringResource(R.string.app_name), contentScale = ContentScale.Fit, modifier = Modifier.width(176.dp).height(38.dp))
     }
     }
 }
@@ -2932,6 +3011,7 @@ private fun SettingsDashboard(
         mutableStateOf(if (!playerPrefs.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceSubtitleLanguage(model.uiLanguage)
         else playerPrefs.getString("subtitleTranslationLanguage", interfaceSubtitleLanguage(model.uiLanguage)) ?: interfaceSubtitleLanguage(model.uiLanguage))
     }
+    var useBuiltInTvKeyboard by remember(playerPrefs) { mutableStateOf(playerPrefs.getBoolean("useBuiltInTvKeyboard", true)) }
     var downloadedTranslationLanguages by remember { mutableStateOf<Set<String>>(emptySet()) }
     var translationModelLanguage by remember { mutableStateOf("en") }
     var translationModelStatus by remember { mutableStateOf<String?>(null) }
@@ -3276,6 +3356,14 @@ private fun SettingsDashboard(
                                     "24" to stringResource(R.string.history_period_24)
                                 )) { onHistoryPeriodChange(it.toInt()) }
                                 OutlinedButton(onClick = onClearHistoryPeriod, enabled = model.history.isNotEmpty(), modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.history_clear_period_action)) }
+                                HorizontalDivider()
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(stringResource(R.string.use_built_in_tv_keyboard), Modifier.weight(1f))
+                                    Switch(useBuiltInTvKeyboard, {
+                                        useBuiltInTvKeyboard = it
+                                        playerPrefs.edit().putBoolean("useBuiltInTvKeyboard", it).apply()
+                                    })
+                                }
                             }
                             "interface" -> {
                                 val themeLabel = stringResource(when (model.selectedTheme) { PeerIcheThemes.LIGHT -> R.string.theme_light; PeerIcheThemes.PEERTUBE -> R.string.theme_peertube; PeerIcheThemes.BLUE -> R.string.theme_blue; else -> R.string.theme_graphite })
@@ -3535,13 +3623,14 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null) {
+@Composable private fun VideoListRow(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: () -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, statusLabel: String? = null, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null, preferredFocusRequester: FocusRequester? = null, preferredFocusVideoId: String? = null) {
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
     val showContextMenu: () -> Unit = { suppressOpenAfterMenu = true; contextMenu = true }
     val dismissContextMenu: () -> Unit = { contextMenu = false; suppressOpenAfterMenu = false }
     Box(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
+            .then(if (preferredFocusRequester != null && video.uuid == preferredFocusVideoId) Modifier.focusRequester(preferredFocusRequester) else Modifier)
             .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier)
             .onFocusChanged { state -> if (state.isFocused) setContextMenuTarget(video.uuid, showContextMenu, onOpen) else setContextMenuTarget(video.uuid, null, null) }
             .remoteCenterPress(onOpen, showContextMenu, holdSeconds)
@@ -3562,7 +3651,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null) {
+@Composable private fun VideoGridCard(video: Video, server: String, progress: Float, favorite: Boolean, subscribed: Boolean, titleLines: Int, tickerSpeed: Float, onOpen: () -> Unit, onFavorite: () -> Unit, onSubscription: () -> Unit, onChannel: (String) -> Unit, setContextMenuTarget: (String, (() -> Unit)?, (() -> Unit)?) -> Unit, holdSeconds: Float, onExcludeRecommendation: () -> Unit = {}, onMarkWatched: () -> Unit = {}, firstCardFocusRequester: FocusRequester? = null, upFocusRequester: FocusRequester? = null, preferredFocusRequester: FocusRequester? = null, preferredFocusVideoId: String? = null) {
     var focused by remember { mutableStateOf(false) }
     var contextMenu by remember { mutableStateOf(false) }
     var suppressOpenAfterMenu by remember { mutableStateOf(false) }
@@ -3572,6 +3661,7 @@ private fun SettingsChoice(title: String, selected: String, options: List<Pair<S
     Box {
         Card(
             modifier = Modifier.fillMaxWidth().then(if (firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
+                .then(if (preferredFocusRequester != null && video.uuid == preferredFocusVideoId) Modifier.focusRequester(preferredFocusRequester) else Modifier)
                 .then(if (upFocusRequester != null) Modifier.focusProperties { up = upFocusRequester } else Modifier)
                 .zIndex(if (focused) 1f else 0f)
                 .onFocusChanged {
@@ -3804,12 +3894,20 @@ internal fun formatPublishedDate(value: String?): String? {
     downFocusRequester: FocusRequester? = null,
     firstCardFocusRequester: FocusRequester? = null,
     upFocusRequester: FocusRequester? = null,
+    preferredFocusRequester: FocusRequester? = null,
+    preferredFocusVideoId: String? = null,
+    restoreFocusPending: Boolean = false,
     onExcludeRecommendation: (Video) -> Unit = {},
     onMarkWatched: (Video) -> Unit = {}
 ) {
+    val shelfState = rememberLazyListState()
+    LaunchedEffect(shelfState, preferredFocusVideoId, videos, restoreFocusPending) {
+        val targetIndex = preferredFocusVideoId?.let { id -> videos.indexOfFirst { it.uuid == id } } ?: -1
+        if (restoreFocusPending && targetIndex >= 0) runCatching { shelfState.scrollToItem(targetIndex) }
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) {
+        LazyRow(state = shelfState, horizontalArrangement = Arrangement.spacedBy(12.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)) {
             items(videos, key = { it.uuid }) { video ->
                 var focused by remember { mutableStateOf(false) }
                 var contextMenu by remember { mutableStateOf(false) }
@@ -3822,6 +3920,7 @@ internal fun formatPublishedDate(value: String?): String? {
                         onClick = { if (suppressOpenAfterMenu) suppressOpenAfterMenu = false else onOpen(video) },
                         modifier = Modifier.width(250.dp)
                             .then(if (video.uuid == videos.firstOrNull()?.uuid && firstCardFocusRequester != null) Modifier.focusRequester(firstCardFocusRequester) else Modifier)
+                            .then(if (video.uuid == preferredFocusVideoId && preferredFocusRequester != null) Modifier.focusRequester(preferredFocusRequester) else Modifier)
                             .then(if (downFocusRequester != null || upFocusRequester != null) Modifier.focusProperties {
                                 if (downFocusRequester != null) down = downFocusRequester
                                 if (upFocusRequester != null) up = upFocusRequester

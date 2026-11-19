@@ -130,6 +130,14 @@
     <string name="update_checksum_mismatch">Контрольная сумма SHA-256 загруженного APK не совпала.</string>
     <string name="settings_accounts">Аккаунты</string>
     <string name="account_server">Сервер PeerTube (HTTPS)</string>
+    <string name="account_keyboard_input">Ввод</string>
+    <string name="account_keyboard_url">https://</string>
+    <string name="account_keyboard_clear">Очистить</string>
+    <string name="account_keyboard_letters">Буквы</string>
+    <string name="account_keyboard_symbols">Символы</string>
+    <string name="account_keyboard_space">Пробел</string>
+    <string name="account_keyboard_done">Готово</string>
+    <string name="use_built_in_tv_keyboard">Встроенная клавиатура для ТВ</string>
     <string name="account_username">Имя пользователя</string>
     <string name="account_password">Пароль</string>
     <string name="account_otp">Код двухфакторной аутентификации</string>
