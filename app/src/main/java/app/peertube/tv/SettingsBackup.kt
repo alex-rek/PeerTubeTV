@@ -44,7 +44,7 @@ internal fun createSettingsBackup(context: android.content.Context): String {
 private fun writeSettingsBackupZip(context: android.content.Context, output: java.io.OutputStream) {
     val values = context.getSharedPreferences("peertube", 0).all
     val json = com.google.gson.JsonObject()
-    values.filterKeys { !it.startsWith("proxy", ignoreCase = true) }.forEach { (key, value) ->
+    values.filterKeys { SettingsBackupCodec.isBackedUp(it) && !it.startsWith("proxy", ignoreCase = true) }.forEach { (key, value) ->
         val item = com.google.gson.JsonObject()
         val type = when (value) {
             is String -> "string"

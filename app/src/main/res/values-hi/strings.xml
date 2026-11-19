@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">पूरा वीडियो</string>
     <string name="update_empty_file">डाउनलोड की गई APK फ़ाइल खाली है।</string>
     <string name="update_checksum_mismatch">डाउनलोड की गई APK की SHA-256 जाँच विफल हुई।</string>
+    <string name="player_video_profile">रिज़ॉल्यूशन</string>
+    <string name="player_default_resolution">डिफ़ॉल्ट रिज़ॉल्यूशन</string>
+    <string name="player_resolution_auto">स्वचालित (स्क्रीन के अनुसार)</string>
 </resources>

@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">整个视频</string>
     <string name="update_empty_file">下载的 APK 文件为空。</string>
     <string name="update_checksum_mismatch">下载的 APK 未通过 SHA-256 校验。</string>
+    <string name="player_video_profile">分辨率</string>
+    <string name="player_default_resolution">默认分辨率</string>
+    <string name="player_resolution_auto">自动（适应屏幕）</string>
 </resources>

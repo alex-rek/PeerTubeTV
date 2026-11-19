@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">Vidéo entière</string>
     <string name="update_empty_file">Le fichier APK téléchargé est vide.</string>
     <string name="update_checksum_mismatch">La vérification SHA-256 de l’APK téléchargé a échoué.</string>
+    <string name="player_video_profile">Résolution</string>
+    <string name="player_default_resolution">Résolution par défaut</string>
+    <string name="player_resolution_auto">Auto (selon l’écran)</string>
 </resources>

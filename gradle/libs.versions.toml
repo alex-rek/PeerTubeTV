@@ -6,7 +6,6 @@ core = "1.15.0"
 appcompat = "1.7.0"
 activity = "1.10.0"
 lifecycle = "2.8.7"
-navigation = "2.8.5"
 media3 = "1.11.1"
 tvprovider = "1.0.0"
 retrofit = "3.0.0"
@@ -21,7 +20,6 @@ androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "core" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
-androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
 androidx-tvprovider = { module = "androidx.tvprovider:tvprovider", version.ref = "tvprovider" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-ui = { module = "androidx.compose.ui:ui" }

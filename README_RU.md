@@ -1,8 +1,8 @@
 # PeerIcheTV
 
-**Клиент PeerTube для Android TV и планшетов на Kotlin и Media3.**
+**Клиент PeerTube для Android TV на Kotlin и Media3.**
 
-PeerIcheTV подключается к серверам PeerTube с открытым API. Интерфейс рассчитан на управление пультом телевизора и сенсорный экран.
+PeerIcheTV подключается к серверам PeerTube с открытым API. Приложение рассчитано на устройства Android TV и управление пультом.
 
 Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerIcheTV — независимый проект, не связанный с SmartTube.
 
@@ -28,7 +28,7 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 ## Скачать и установить
 
-Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerIcheTV/releases/latest) и установите на Android TV или планшет. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
+Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerIcheTV/releases/latest) и установите на устройство Android TV. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
 
 ## Сборка из исходного кода
 

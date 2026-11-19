@@ -1,5 +1,6 @@
 package app.peertube.tv
 
+import androidx.core.content.edit
 import android.content.Intent
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -95,6 +96,7 @@ internal fun SettingsDashboard(
         mutableStateOf(if (!playerPrefs.getBoolean("subtitleTranslationLanguageCustom", false)) interfaceSubtitleLanguage(model.uiLanguage)
         else playerPrefs.getString("subtitleTranslationLanguage", interfaceSubtitleLanguage(model.uiLanguage)) ?: interfaceSubtitleLanguage(model.uiLanguage))
     }
+    var defaultVideoHeight by remember(playerPrefs) { mutableIntStateOf(playerPrefs.getInt(DEFAULT_VIDEO_HEIGHT_KEY, 0).coerceAtLeast(0)) }
     var useBuiltInTvKeyboard by remember(playerPrefs) { mutableStateOf(playerPrefs.getBoolean("useBuiltInTvKeyboard", true)) }
     var downloadedTranslationLanguages by remember { mutableStateOf<Set<String>>(emptySet()) }
     var translationModelLanguage by remember { mutableStateOf("en") }
@@ -476,6 +478,11 @@ internal fun SettingsDashboard(
                                 }
                             }
                             "player" -> {
+                                val resolutionOptions = listOf("0" to stringResource(R.string.player_resolution_auto)) + DEFAULT_VIDEO_HEIGHT_OPTIONS.map { it.toString() to "${it}p" }
+                                SettingsChoice(stringResource(R.string.player_default_resolution), resolutionOptions.firstOrNull { it.first == defaultVideoHeight.toString() }?.second ?: "${defaultVideoHeight}p", resolutionOptions) {
+                                    defaultVideoHeight = it.toInt()
+                                    playerPrefs.edit { putInt(DEFAULT_VIDEO_HEIGHT_KEY, defaultVideoHeight) }
+                                }
                                 val seekLabel = "${model.seekStepSeconds} ${stringResource(R.string.seconds_short)}"
                                 SettingsChoice(stringResource(R.string.player_seek_step), seekLabel, listOf(5, 10, 15, 30, 60).map { it.toString() to "$it ${stringResource(R.string.seconds_short)}" }) { model.updateSeekStep(it.toInt()) }
                                 val bufferLabel = stringResource(when (model.bufferProfile) { "small" -> R.string.buffer_small; "large" -> R.string.buffer_large; "largest" -> R.string.buffer_largest; else -> R.string.buffer_medium })

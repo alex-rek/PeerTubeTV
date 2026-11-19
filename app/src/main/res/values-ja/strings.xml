@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">動画全体</string>
     <string name="update_empty_file">ダウンロードした APK は空です。</string>
     <string name="update_checksum_mismatch">ダウンロードした APK の SHA-256 検証に失敗しました。</string>
+    <string name="player_video_profile">解像度</string>
+    <string name="player_default_resolution">既定の解像度</string>
+    <string name="player_resolution_auto">自動（画面に合わせる）</string>
 </resources>

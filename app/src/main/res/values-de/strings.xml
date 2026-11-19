@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">Ganzes Video</string>
     <string name="update_empty_file">Die heruntergeladene APK-Datei ist leer.</string>
     <string name="update_checksum_mismatch">Die SHA-256-Prüfung der heruntergeladenen APK ist fehlgeschlagen.</string>
+    <string name="player_video_profile">Auflösung</string>
+    <string name="player_default_resolution">Standardauflösung</string>
+    <string name="player_resolution_auto">Automatisch (Bildschirm)</string>
 </resources>

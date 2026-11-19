@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">Vídeo inteiro</string>
     <string name="update_empty_file">O APK transferido está vazio.</string>
     <string name="update_checksum_mismatch">A verificação SHA-256 do APK transferido falhou.</string>
+    <string name="player_video_profile">Resolução</string>
+    <string name="player_default_resolution">Resolução padrão</string>
+    <string name="player_resolution_auto">Automática (pela tela)</string>
 </resources>

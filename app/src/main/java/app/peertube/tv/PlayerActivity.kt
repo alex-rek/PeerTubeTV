@@ -151,7 +151,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             if (details != null) {
                 videoDescription = details.description.orEmpty()
                 if (url == null) {
-                    url = details.playableUrl()
+                    url = details.playableUrl(defaultVideoHeight(context))
                     audioOnly = details.isAudioOnlySource()
                     if (url == null) errorText = when (details.state?.id ?: initialLiveStateId) {
                         4 -> context.getString(R.string.player_live_not_started)
@@ -329,7 +329,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var selectedVideoCodec by remember { mutableStateOf(playerPreferences.getString("playerVideoCodec", "auto") ?: "auto") }
     var selectedAudioFormat by remember { mutableStateOf(playerPreferences.getString("playerAudioFormat", "auto") ?: "auto") }
     var selectedAudioLanguage by remember { mutableStateOf(playerPreferences.getString("playerAudioLanguage", "auto") ?: "auto") }
-    var selectedVideoProfile by remember { mutableIntStateOf(playerPreferences.getInt("playerVideoProfile", 0)) }
+    // Starts from the default in Settings → Player; changes from the HD panel apply to this session only.
+    var selectedVideoProfile by remember { mutableIntStateOf(playerPreferences.getInt(DEFAULT_VIDEO_HEIGHT_KEY, 0).coerceAtLeast(0)) }
     var autoFrameRate by remember { mutableStateOf(playerPreferences.getBoolean("playerAutoFrameRate", false)) }
     var qualityFallbackAttempted by remember(url) { mutableStateOf(false) }
     var audioOnlyFallbackAttempted by remember(url) { mutableStateOf(false) }
@@ -401,7 +402,9 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     val player = remember(context) {
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(ApiFactory.media3DataSourceFactory())
-        ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory)
+        // Decoder fallback lets weak TV chips retry on another decoder instead of failing playback.
+        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+        ExoPlayer.Builder(context, renderersFactory).setMediaSourceFactory(mediaSourceFactory)
             .setHandleAudioBecomingNoisy(true)
             .setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
                 setAudioAttributes(
@@ -452,7 +455,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 if (failedVideoMime && !qualityFallbackAttempted && fallbackHeight != null && currentItem != null) {
                     qualityFallbackAttempted = true
                     trackSelector.parameters = trackSelector.parameters.buildUpon().setPreferredVideoMimeType(null)
-                        .setMaxVideoSize(Int.MAX_VALUE, fallbackHeight).build()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO).setMaxVideoSize(Int.MAX_VALUE, fallbackHeight).build()
                     val resumeAt = player.currentPosition
                     player.setMediaItem(currentItem, resumeAt)
                     player.prepare()
@@ -844,7 +847,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     val videoCodecs = listOf("auto") + videoFormats.mapNotNull { it.sampleMimeType }.distinct()
     val audioCodecs = listOf("auto") + audioFormats.mapNotNull { it.sampleMimeType }.distinct()
     val audioLanguages = listOf("auto") + audioFormats.mapNotNull { it.language?.takeIf(String::isNotBlank) }.distinct()
-    val videoProfiles = listOf(0) + videoFormats.map { it.height }.filter { it > 0 }.distinct().sortedDescending()
+    val videoProfiles = listOf(0) + (videoFormats.map { it.height }.filter { it > 0 } + listOfNotNull(selectedVideoProfile.takeIf { it > 0 })).distinct().sortedDescending()
     val availableTrackSignature = (videoFormats + audioFormats).joinToString("|") { "${it.sampleMimeType}:${it.height}:${it.language}:${it.channelCount}" }
 
     fun persistQualityPreference(key: String, value: Any) {
@@ -877,16 +880,27 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     }
     fun applyVideoProfile(value: Int) {
         selectedVideoProfile = value
-        persistQualityPreference("playerVideoProfile", value)
-        val maxHeight = value.takeIf { it > 0 } ?: Int.MAX_VALUE
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setMaxVideoSize(Int.MAX_VALUE, maxHeight).build()
+        val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+        player.trackSelectionParameters = if (value > 0) {
+            // An explicit choice may exceed the screen size, so drop the viewport limit, and pin the
+            // track so adaptive streaming does not start lower and ramp up.
+            val candidates = videoTrackGroups.flatMap { group -> (0 until group.length).filter { group.isTrackSupported(it) }.map { group to it } }
+            val pinned = candidates.filter { (group, index) -> group.getTrackFormat(index).height in 1..value }.maxByOrNull { (group, index) -> group.getTrackFormat(index).height }
+                ?: candidates.minByOrNull { (group, index) -> group.getTrackFormat(index).height }
+            builder.setMaxVideoSize(Int.MAX_VALUE, value).clearViewportSizeConstraints().apply {
+                if (pinned != null) setOverrideForType(androidx.media3.common.TrackSelectionOverride(pinned.first.mediaTrackGroup, pinned.second))
+            }.build()
+        } else {
+            // Automatic: the best track that fits the physical display.
+            builder.setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).setViewportSizeToPhysicalDisplaySize(context, true).build()
+        }
     }
     fun cycleQualityRow(row: Int, delta: Int) {
         when (row) {
-            0 -> applyVideoCodec(videoCodecs.cyclicNext(selectedVideoCodec, delta))
-            1 -> applyAudioFormat(audioCodecs.cyclicNext(selectedAudioFormat, delta))
-            2 -> applyAudioLanguage(audioLanguages.cyclicNext(selectedAudioLanguage, delta))
-            3 -> applyVideoProfile(videoProfiles.cyclicNext(selectedVideoProfile, delta))
+            0 -> applyVideoProfile(videoProfiles.cyclicNext(selectedVideoProfile, delta))
+            1 -> applyVideoCodec(videoCodecs.cyclicNext(selectedVideoCodec, delta))
+            2 -> applyAudioFormat(audioCodecs.cyclicNext(selectedAudioFormat, delta))
+            3 -> applyAudioLanguage(audioLanguages.cyclicNext(selectedAudioLanguage, delta))
             4 -> {
                 if (Build.VERSION.SDK_INT >= 31 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)) {
                     autoFrameRate = !autoFrameRate
@@ -1194,17 +1208,17 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         }
         if (qualityPanelOpen) {
             val panelTitles = listOf(
+                stringResource(R.string.player_video_profile),
                 stringResource(R.string.player_video_format),
                 stringResource(R.string.player_audio_format),
                 stringResource(R.string.player_audio_language),
-                stringResource(R.string.player_video_profile),
                 stringResource(R.string.player_auto_frame_rate)
             )
             val valueLabels = listOf(
+                if (selectedVideoProfile == 0) stringResource(R.string.player_resolution_auto) else "${selectedVideoProfile}p",
                 if (selectedVideoCodec == "auto") stringResource(R.string.player_quality_auto) else codecDisplayName(selectedVideoCodec),
                 if (selectedAudioFormat == "auto") stringResource(R.string.player_quality_auto) else codecDisplayName(selectedAudioFormat),
                 if (selectedAudioLanguage == "auto") stringResource(R.string.player_quality_auto) else java.util.Locale.forLanguageTag(selectedAudioLanguage).getDisplayName(java.util.Locale.getDefault()),
-                if (selectedVideoProfile == 0) stringResource(R.string.player_quality_auto) else "${selectedVideoProfile}p",
                 when {
                     Build.VERSION.SDK_INT < 31 || !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) -> stringResource(R.string.player_quality_unavailable)
                     autoFrameRate -> stringResource(R.string.player_quality_on)

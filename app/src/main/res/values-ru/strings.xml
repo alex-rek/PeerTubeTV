@@ -43,7 +43,7 @@
     <string name="player_video_format">Видеоформат</string>
     <string name="player_audio_format">Аудиоформат</string>
     <string name="player_audio_language">Язык аудио</string>
-    <string name="player_video_profile">Профиль видео</string>
+    <string name="player_video_profile">Разрешение</string>
     <string name="player_auto_frame_rate">Автоподстройка частоты кадров</string>
     <string name="player_quality_auto">Авто</string>
     <string name="player_quality_on">Вкл.</string>
@@ -174,4 +174,6 @@
     <string name="update_checking">Проверка обновлений…</string>
     <string name="update_no_new_version">Установлена последняя версия PeerIcheTV.</string>
     <string name="mini_section_rail">Показывать мини-панель разделов</string>
+    <string name="player_default_resolution">Разрешение по умолчанию</string>
+    <string name="player_resolution_auto">Авто (по экрану)</string>
 </resources>

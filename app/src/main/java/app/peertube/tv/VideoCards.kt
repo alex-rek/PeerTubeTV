@@ -195,8 +195,9 @@ internal fun VideoContextMenu(
         sensitivePrefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { sensitivePrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    val blurSensitive = video.nsfw && sensitiveMode == "blur"
-    val warnSensitive = video.nsfw && sensitiveMode == "warning"
+    // Modifier.blur is a no-op before Android 12, so older TVs fall back to the opaque warning overlay.
+    val blurSensitive = video.nsfw && sensitiveMode == "blur" && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+    val warnSensitive = video.nsfw && (sensitiveMode == "warning" || sensitiveMode == "blur" && !blurSensitive)
     Box(modifier) {
         AsyncImage(
             model = thumbnailCandidates.getOrNull(thumbnailCandidateIndex),

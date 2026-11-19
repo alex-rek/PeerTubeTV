@@ -50,9 +50,8 @@ import java.util.Locale
     val accountManager = remember(context) { PeerTubeAccounts.get(context) }
     val accountState by accountManager.state.collectAsState()
     LaunchedEffect(accountManager) { runCatching { accountManager.initialize() } }
-    val navigationTone = remember { android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 35) }
+    val audioManager = remember(context) { context.getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager }
     var lastNavigationToneAt by remember { mutableLongStateOf(0L) }
-    DisposableEffect(navigationTone) { onDispose { navigationTone.release() } }
     val isTvDevice = remember { isTelevisionDevice(context) }
     val tvProviderPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -273,13 +272,14 @@ import java.util.Locale
             (it.channel?.name ?: it.account?.name).equals(channelName, ignoreCase = true) &&
                 (it.channel?.host ?: it.account?.host ?: it.host).equals(channelHost, ignoreCase = true)
         } else queue
+        val preferredHeight = defaultVideoHeight(context)
         val playbackQueue = queueForPlayback.map { item ->
             val host = item.channel?.host ?: item.account?.host ?: item.host
                 ?: item.sourceServer(m.server).removePrefix("https://").removePrefix("http://")
             PlaybackQueueItem(
                 uuid = item.uuid,
                 server = item.sourceServer(m.server),
-                url = item.playableUrl()?.takeUnless { item.state?.id in listOf(4, 5) },
+                url = item.playableUrl(preferredHeight)?.takeUnless { item.state?.id in listOf(4, 5) },
                 title = item.name,
                 views = item.views,
                 publishedAt = item.publishedAt,
@@ -292,7 +292,7 @@ import java.util.Locale
         }
         val queueIndex = playbackQueue.indexOfFirst { it.uuid == video.uuid }
         context.startActivity(Intent(context, PlayerActivity::class.java)
-            .putExtra("url", video.playableUrl()?.takeUnless { video.state?.id in listOf(4, 5) })
+            .putExtra("url", video.playableUrl(preferredHeight)?.takeUnless { video.state?.id in listOf(4, 5) })
             .putExtra("audioOnly", video.isAudioOnlySource())
             .putExtra("liveStateId", video.state?.id ?: 0)
             .putExtra("uuid", video.uuid)
@@ -400,7 +400,7 @@ import java.util.Locale
                 }
                 val now = android.os.SystemClock.uptimeMillis()
                 if (sound != null && now - lastNavigationToneAt >= 70L) {
-                    navigationTone.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 32)
+                    audioManager.playSoundEffect(sound)
                     lastNavigationToneAt = now
                 }
             }

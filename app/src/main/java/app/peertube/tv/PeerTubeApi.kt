@@ -36,21 +36,15 @@ data class Video(val uuid: String, val name: String, val description: String? = 
         return mediaFiles.any { it.hasVideo == false } && mediaFiles.none { it.hasVideo == true || it.hasVideo == null }
     }
 
-    fun playableUrl(): String? = streamingPlaylists.orEmpty()
+    /**
+     * HLS playlists carry every resolution and are limited later by the player; for direct files the
+     * one closest to [maxHeight] (0 = highest) is chosen up front.
+     */
+    fun playableUrl(maxHeight: Int = 0): String? = streamingPlaylists.orEmpty()
         .firstNotNullOfOrNull { it.playlistUrl?.takeIf(String::isNotBlank) }
-        ?: files.orEmpty().asSequence()
-            .filter { it.hasVideo != false }
-            .maxByOrNull { it.resolution?.id ?: 0 }
-            ?.fileUrl?.takeIf(String::isNotBlank)
-        ?: streamingPlaylists.orEmpty().asSequence()
-            .flatMap { it.files.orEmpty().asSequence() }
-            .filter { it.hasVideo != false }
-            .maxByOrNull { it.resolution?.id ?: 0 }
-            ?.fileUrl?.takeIf(String::isNotBlank)
-        ?: allMediaFiles().asSequence()
-            .filter { it.hasVideo == false }
-            .maxByOrNull { it.resolution?.id ?: 0 }
-            ?.fileUrl?.takeIf(String::isNotBlank)
+        ?: pickVideoFile(files.orEmpty().asSequence().filter { it.hasVideo != false }, maxHeight)?.fileUrl
+        ?: pickVideoFile(streamingPlaylists.orEmpty().asSequence().flatMap { it.files.orEmpty().asSequence() }.filter { it.hasVideo != false }, maxHeight)?.fileUrl
+        ?: pickVideoFile(allMediaFiles().asSequence().filter { it.hasVideo == false }, 0)?.fileUrl
 
     fun sourceServer(fallback: String): String {
         val webUrl = url?.let { runCatching { java.net.URI(it) }.getOrNull() }

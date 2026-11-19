@@ -24,6 +24,7 @@ internal class HomeUiState {
     val instancesConnectFocusRequester = FocusRequester()
     val checkAllServersFocusRequester = FocusRequester()
     val firstServerConnectFocusRequester = FocusRequester()
+    val serverFieldFocusRequester = FocusRequester()
     // Focus bookkeeping is consumed by the restore effects on menu/tab changes;
     // it does not need to invalidate the whole screen on every D-pad movement.
     val lastFocusedCardBySection = mutableMapOf<String, String>()

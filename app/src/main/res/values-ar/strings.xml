@@ -20,4 +20,7 @@
     <string name="watched_threshold_complete">الفيديو بالكامل</string>
     <string name="update_empty_file">ملف APK الذي تم تنزيله فارغ.</string>
     <string name="update_checksum_mismatch">فشل التحقق من SHA-256 لملف APK الذي تم تنزيله.</string>
+    <string name="player_video_profile">الدقة</string>
+    <string name="player_default_resolution">الدقة الافتراضية</string>
+    <string name="player_resolution_auto">تلقائي (حسب الشاشة)</string>
 </resources>
