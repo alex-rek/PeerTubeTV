@@ -2164,10 +2164,16 @@ private fun isTelevisionDevice(context: android.content.Context): Boolean =
                 event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft && !menuExpanded -> {
                     if (collapsedMenuItemFocused) { menuExpanded = true; true }
                     else if (focusedVideoMenu != null && !focusedVideoAtLeftBoundary) {
-                        focusManager.moveFocus(FocusDirection.Left)
-                        true
+                        if (focusManager.moveFocus(FocusDirection.Left)) true
+                        else if (m.miniSectionRailEnabled && collapsedMenuFocusRequesters[focusedMenuSectionKey] != null) {
+                            runCatching { collapsedMenuFocusRequesters[focusedMenuSectionKey]?.requestFocus() }
+                            true
+                        } else {
+                            menuExpanded = true
+                            true
+                        }
                     }
-                    else if (focusedVideoMenu != null && collapsedMenuFocusRequesters[focusedMenuSectionKey] != null) {
+                    else if (m.miniSectionRailEnabled && focusedVideoMenu != null && collapsedMenuFocusRequesters[focusedMenuSectionKey] != null) {
                         runCatching { collapsedMenuFocusRequesters[focusedMenuSectionKey]?.requestFocus() }
                         true
                     }
