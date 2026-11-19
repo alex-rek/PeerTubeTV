@@ -243,7 +243,7 @@ internal fun VideoContextMenu(
 }
 
 @Composable private fun PublishedDate(publishedAt: String?, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    val formatted = remember(publishedAt, Locale.getDefault()) { formatPublishedDate(publishedAt) }
+    val formatted = remember(publishedAt, currentLocale()) { formatPublishedDate(publishedAt) }
     if (formatted != null) Text(stringResource(R.string.video_published, formatted), style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1)
 }
 

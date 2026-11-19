@@ -95,9 +95,16 @@ internal fun ColumnScope.SearchTab(m: HomeModel, ui: HomeUiState, search: Search
     m.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     if (m.isSearching) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
     if (m.isVerifyingAvailability) Text(stringResource(R.string.availability_checking), style = MaterialTheme.typography.bodySmall)
-    val searchContext = LocalContext.current
+    val sourceLabels = mapOf(
+        SearchSource.SEPIA to stringResource(R.string.search_source_sepia),
+        SearchSource.PEERSEEK to stringResource(R.string.search_source_peerseek),
+        SearchSource.CUSTOM to stringResource(R.string.search_source_custom),
+        SearchSource.FEDERATED to stringResource(R.string.search_source_federated),
+        SearchSource.DIRECT to stringResource(R.string.search_source_direct),
+        SearchSource.LOCAL to stringResource(R.string.search_source_local)
+    )
     val usedSources = m.searchSourcesByVideo.values.flatten().toSet().sortedBy { m.searchSettings.order.indexOf(it) }.joinToString(", ") { source ->
-        searchContext.getString(when (source) { SearchSource.SEPIA -> R.string.search_source_sepia; SearchSource.PEERSEEK -> R.string.search_source_peerseek; SearchSource.CUSTOM -> R.string.search_source_custom; SearchSource.FEDERATED -> R.string.search_source_federated; SearchSource.DIRECT -> R.string.search_source_direct; SearchSource.LOCAL -> R.string.search_source_local })
+        sourceLabels.getValue(source)
     }
     if (usedSources.isNotBlank()) Text(stringResource(R.string.search_sources_in_use, usedSources), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (SearchSource.LOCAL in m.searchSourcesByVideo.values.flatten() && m.searchSourceErrors.isNotEmpty()) Text(stringResource(R.string.search_cache_stale), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)

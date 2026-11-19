@@ -42,9 +42,16 @@ import java.text.SimpleDateFormat
             now = System.currentTimeMillis()
         }
     }
-    Text(java.text.SimpleDateFormat(if (is24Hour) "HH:mm" else "h:mm a", Locale.getDefault()).format(java.util.Date(now)), style = MaterialTheme.typography.headlineSmall)
-    Text(java.text.SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(java.util.Date(now)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val locale = currentLocale()
+    Text(java.text.SimpleDateFormat(if (is24Hour) "HH:mm" else "h:mm a", locale).format(java.util.Date(now)), style = MaterialTheme.typography.headlineSmall)
+    Text(java.text.SimpleDateFormat("EEE, d MMM", locale).format(java.util.Date(now)), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
+
+/** The UI locale as an observable composition value, so text recomposes when the app language changes. */
+@Composable
+@ReadOnlyComposable
+internal fun currentLocale(): Locale =
+    androidx.core.os.ConfigurationCompat.getLocales(androidx.compose.ui.platform.LocalConfiguration.current)[0] ?: Locale.ROOT
 
 @Composable internal fun SearchFilter(label: String, selected: String, options: List<Pair<String, String>>, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }

@@ -21,3 +21,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       - name: Run lint, unit tests, and debug build
         run: ./gradlew lintDebug testDebugUnitTest assembleDebug
+      # Unsigned release build: exercises R8 and the Gson keep rules in proguard-rules.pro.
+      - name: Build release (R8)
+        run: ./gradlew assembleRelease

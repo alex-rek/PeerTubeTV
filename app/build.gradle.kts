@@ -51,6 +51,9 @@ android {
     }
     lint {
         baseline = file("lint-baseline.xml")
+        // Translations are contributed gradually (see README); untranslated strings fall back
+        // to English at runtime, so report them without failing the build.
+        warning += "MissingTranslation"
     }
 }
 

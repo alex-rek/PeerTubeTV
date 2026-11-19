@@ -124,10 +124,11 @@ internal fun SettingsDashboard(
         val locale = Locale.forLanguageTag(tag)
         tag to locale.getDisplayName(locale)
     }
-    val recommendationLanguageOptions = remember {
+    val uiLocale = currentLocale()
+    val recommendationLanguageOptions = remember(uiLocale) {
         listOf("country" to "") + Locale.getISOLanguages().distinct().map { code ->
-            code to Locale(code).getDisplayLanguage(Locale.getDefault()).takeIf(String::isNotBlank).orEmpty()
-        }.filter { it.second.isNotBlank() }.sortedBy { it.second.lowercase(Locale.getDefault()) }
+            code to Locale(code).getDisplayLanguage(uiLocale).takeIf(String::isNotBlank).orEmpty()
+        }.filter { it.second.isNotBlank() }.sortedBy { it.second.lowercase(uiLocale) }
     }.map { (code, label) -> code to if (code == "country") stringResource(R.string.recommendations_language_country) else label }
     val translationTargetLanguage = interfaceSubtitleLanguage(model.uiLanguage)
     val subtitleTranslationOptions = listOf("auto" to stringResource(R.string.subtitle_translation_follow_interface, translationLanguageName(translationTargetLanguage))) +
@@ -303,7 +304,7 @@ internal fun SettingsDashboard(
                                 OutlinedButton(onClick = { onSelectSubpage("country") }, modifier = Modifier.fillMaxWidth()) {
                                     Text(if (model.searchCountryCode.isBlank()) stringResource(R.string.country_default) else countryOptions.firstOrNull { it.first == model.searchCountryCode }?.second ?: model.searchCountryCode)
                                 }
-                                val recommendationLanguageLabel = if (model.recommendationLanguage == "country") stringResource(R.string.recommendations_language_country) else Locale.forLanguageTag(model.recommendationLanguage).getDisplayLanguage(Locale.getDefault())
+                                val recommendationLanguageLabel = if (model.recommendationLanguage == "country") stringResource(R.string.recommendations_language_country) else Locale.forLanguageTag(model.recommendationLanguage).getDisplayLanguage(currentLocale())
                                 SettingsChoice(stringResource(R.string.recommendations_language), recommendationLanguageLabel, recommendationLanguageOptions) { model.updateRecommendationLanguage(it) }
                             }
                             "subtitles" -> {
