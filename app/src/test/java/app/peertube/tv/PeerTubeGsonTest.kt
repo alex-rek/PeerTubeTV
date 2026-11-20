@@ -6,6 +6,23 @@ import org.junit.Test
 
 class PeerTubeGsonTest {
     @Test
+    fun readsSubscriptionsStoredByMinifiedReleasesAndCurrentFormat() {
+        val type = object : com.google.gson.reflect.TypeToken<List<VideoSubscription>>() {}.type
+        val legacy = PeerTubeGson.instance.fromJson<List<VideoSubscription>>("""[{"a":"news","b":"video.example","c":"News"}]""", type)
+        val current = PeerTubeGson.instance.fromJson<List<VideoSubscription>>("""[{"name":"news","host":"video.example","displayName":"News"}]""", type)
+
+        assertEquals(listOf(VideoSubscription("news", "video.example", "News")), legacy)
+        assertEquals(legacy, current)
+    }
+
+    @Test
+    fun writesSubscriptionsWithReadableFieldNames() {
+        val json = PeerTubeGson.instance.toJson(listOf(VideoSubscription("news", "video.example", "News")))
+
+        assertEquals("""[{"name":"news","host":"video.example","displayName":"News"}]""", json)
+    }
+
+    @Test
     fun incompleteVideoReceivesSafeRequiredDefaults() {
         val video = PeerTubeGson.instance.fromJson("""{"uuid":null,"name":null,"description":null}""", Video::class.java)
 

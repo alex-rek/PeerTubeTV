@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_content">Conteúdo do Início</string>
+    <string name="home_mode_recommended">Recomendados e recentes</string>
+    <string name="home_mode_interests">Interesses</string>
+    <string name="home_mode_server">Vídeos de um servidor</string>
+    <string name="home_mode_channel">Vídeos de um canal</string>
+    <string name="home_interests_help">Escolha categorias para o Início.</string>
+    <string name="home_interests_empty">Escolha pelo menos uma categoria.</string>
+    <string name="home_server_address">URL do servidor PeerTube</string>
+    <string name="home_server_hint">Deixe em branco para usar o servidor selecionado no momento.</string>
+    <string name="home_channel_address">URL do canal ou canal@servidor</string>
+    <string name="home_source_check_save">Verificar e salvar</string>
+    <string name="home_source_saved">Fonte verificada e salva.</string>
+    <string name="home_source_invalid">Não foi possível verificar esta fonte. Confira o endereço e a conexão.</string>
+    <string name="home_source_empty">Nenhum vídeo encontrado para esta fonte do Início.</string>
+    <string name="home_interest_music">Música</string>
+    <string name="home_interest_films">Filmes</string>
+    <string name="home_interest_vehicles">Veículos</string>
+    <string name="home_interest_art">Arte</string>
+    <string name="home_interest_sports">Esportes</string>
+    <string name="home_interest_travel">Viagens</string>
+    <string name="home_interest_gaming">Jogos</string>
+    <string name="home_interest_people">Pessoas</string>
+    <string name="home_interest_comedy">Comédia</string>
+    <string name="home_interest_entertainment">Entretenimento</string>
+    <string name="home_interest_news">Notícias</string>
+    <string name="home_interest_howto">Tutoriais</string>
+    <string name="home_interest_education">Educação</string>
+    <string name="home_interest_activism">Ativismo</string>
+    <string name="home_interest_science">Ciência</string>
+    <string name="home_interest_animals">Animais</string>
+    <string name="home_interest_kids">Crianças</string>
+    <string name="home_interest_food">Culinária</string>
+    <string name="home_interest_nature">Natureza</string>
+</resources>

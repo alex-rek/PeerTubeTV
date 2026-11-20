@@ -161,7 +161,8 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
         LanguageIdentification.getClient(
             LanguageIdentificationOptions.Builder().setConfidenceThreshold(0.5f).build()
         )
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+        logFailure("Language identification unavailable", error)
         // If Play Services/ML Kit is unavailable, keep the original metadata instead of
         // letting the translation coroutine crash the app.
         return@withContext text
@@ -178,7 +179,8 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
         Translation.getClient(
             TranslatorOptions.Builder().setSourceLanguage(source).setTargetLanguage(destination).build()
         )
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+        logFailure("Translator unavailable", error)
         return@withContext text
     }
     val translated = try {
@@ -186,7 +188,8 @@ suspend fun translateVideoMetadata(context: Context, text: String, targetLanguag
         translateMetadataInChunks(translator, sourceText)
     } catch (cancelled: kotlinx.coroutines.CancellationException) {
         throw cancelled
-    } catch (_: Exception) {
+    } catch (error: Exception) {
+        logFailure("Metadata translation failed", error)
         return@withContext text
     } finally {
         translator.close()

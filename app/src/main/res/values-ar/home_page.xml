@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_content">محتوى الصفحة الرئيسية</string>
+    <string name="home_mode_recommended">الموصى به والأحدث</string>
+    <string name="home_mode_interests">الاهتمامات</string>
+    <string name="home_mode_server">فيديوهات من خادم</string>
+    <string name="home_mode_channel">فيديوهات من قناة</string>
+    <string name="home_interests_help">اختر الفئات للصفحة الرئيسية.</string>
+    <string name="home_interests_empty">اختر فئة واحدة على الأقل.</string>
+    <string name="home_server_address">عنوان URL لخادم PeerTube</string>
+    <string name="home_server_hint">اتركه فارغًا لاستخدام الخادم المحدد حاليًا.</string>
+    <string name="home_channel_address">عنوان URL للقناة أو channel@server</string>
+    <string name="home_source_check_save">فحص وحفظ</string>
+    <string name="home_source_saved">تم فحص المصدر وحفظه.</string>
+    <string name="home_source_invalid">تعذّر فحص هذا المصدر. تحقق من عنوانه والاتصال.</string>
+    <string name="home_source_empty">لم يتم العثور على فيديوهات لمصدر الصفحة الرئيسية هذا.</string>
+    <string name="home_interest_music">موسيقى</string>
+    <string name="home_interest_films">أفلام</string>
+    <string name="home_interest_vehicles">مركبات</string>
+    <string name="home_interest_art">فن</string>
+    <string name="home_interest_sports">رياضة</string>
+    <string name="home_interest_travel">سفر</string>
+    <string name="home_interest_gaming">ألعاب</string>
+    <string name="home_interest_people">أشخاص</string>
+    <string name="home_interest_comedy">كوميديا</string>
+    <string name="home_interest_entertainment">ترفيه</string>
+    <string name="home_interest_news">أخبار</string>
+    <string name="home_interest_howto">إرشادات</string>
+    <string name="home_interest_education">تعليم</string>
+    <string name="home_interest_activism">نشاط مجتمعي</string>
+    <string name="home_interest_science">علوم</string>
+    <string name="home_interest_animals">حيوانات</string>
+    <string name="home_interest_kids">أطفال</string>
+    <string name="home_interest_food">طعام</string>
+    <string name="home_interest_nature">طبيعة</string>
+</resources>

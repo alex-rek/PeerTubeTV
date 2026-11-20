@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_content">होम की सामग्री</string>
+    <string name="home_mode_recommended">सुझाए गए और नवीनतम</string>
+    <string name="home_mode_interests">रुचियाँ</string>
+    <string name="home_mode_server">किसी सर्वर के वीडियो</string>
+    <string name="home_mode_channel">किसी चैनल के वीडियो</string>
+    <string name="home_interests_help">होम फ़ीड के लिए श्रेणियाँ चुनें।</string>
+    <string name="home_interests_empty">कम से कम एक श्रेणी चुनें।</string>
+    <string name="home_server_address">PeerTube सर्वर URL</string>
+    <string name="home_server_hint">अभी चुने गए सर्वर का उपयोग करने के लिए खाली छोड़ें।</string>
+    <string name="home_channel_address">चैनल URL या channel@server</string>
+    <string name="home_source_check_save">जाँचें और सहेजें</string>
+    <string name="home_source_saved">स्रोत जाँचा और सहेजा गया।</string>
+    <string name="home_source_invalid">यह स्रोत जाँचा नहीं जा सका। उसका पता और कनेक्शन जाँचें।</string>
+    <string name="home_source_empty">इस होम स्रोत के लिए कोई वीडियो नहीं मिला।</string>
+    <string name="home_interest_music">संगीत</string>
+    <string name="home_interest_films">फ़िल्में</string>
+    <string name="home_interest_vehicles">वाहन</string>
+    <string name="home_interest_art">कला</string>
+    <string name="home_interest_sports">खेल</string>
+    <string name="home_interest_travel">यात्रा</string>
+    <string name="home_interest_gaming">गेमिंग</string>
+    <string name="home_interest_people">लोग</string>
+    <string name="home_interest_comedy">कॉमेडी</string>
+    <string name="home_interest_entertainment">मनोरंजन</string>
+    <string name="home_interest_news">समाचार</string>
+    <string name="home_interest_howto">कैसे करें</string>
+    <string name="home_interest_education">शिक्षा</string>
+    <string name="home_interest_activism">सक्रियता</string>
+    <string name="home_interest_science">विज्ञान</string>
+    <string name="home_interest_animals">जानवर</string>
+    <string name="home_interest_kids">बच्चे</string>
+    <string name="home_interest_food">खाना</string>
+    <string name="home_interest_nature">प्रकृति</string>
+</resources>

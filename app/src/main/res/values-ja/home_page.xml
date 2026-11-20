@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_content">ホームのコンテンツ</string>
+    <string name="home_mode_recommended">おすすめと新着</string>
+    <string name="home_mode_interests">興味</string>
+    <string name="home_mode_server">サーバーの動画</string>
+    <string name="home_mode_channel">チャンネルの動画</string>
+    <string name="home_interests_help">ホームに表示するカテゴリを選んでください。</string>
+    <string name="home_interests_empty">カテゴリを1つ以上選んでください。</string>
+    <string name="home_server_address">PeerTube サーバーの URL</string>
+    <string name="home_server_hint">空欄にすると、現在選択しているサーバーを使います。</string>
+    <string name="home_channel_address">チャンネルの URL または channel@server</string>
+    <string name="home_source_check_save">確認して保存</string>
+    <string name="home_source_saved">ソースを確認して保存しました。</string>
+    <string name="home_source_invalid">このソースを確認できませんでした。アドレスと接続を確認してください。</string>
+    <string name="home_source_empty">このホームのソースでは動画が見つかりませんでした。</string>
+    <string name="home_interest_music">音楽</string>
+    <string name="home_interest_films">映画</string>
+    <string name="home_interest_vehicles">乗り物</string>
+    <string name="home_interest_art">アート</string>
+    <string name="home_interest_sports">スポーツ</string>
+    <string name="home_interest_travel">旅行</string>
+    <string name="home_interest_gaming">ゲーム</string>
+    <string name="home_interest_people">人物</string>
+    <string name="home_interest_comedy">コメディ</string>
+    <string name="home_interest_entertainment">エンタメ</string>
+    <string name="home_interest_news">ニュース</string>
+    <string name="home_interest_howto">ハウツー</string>
+    <string name="home_interest_education">教育</string>
+    <string name="home_interest_activism">社会活動</string>
+    <string name="home_interest_science">科学</string>
+    <string name="home_interest_animals">動物</string>
+    <string name="home_interest_kids">キッズ</string>
+    <string name="home_interest_food">料理</string>
+    <string name="home_interest_nature">自然</string>
+</resources>

@@ -43,7 +43,7 @@
     <string name="player_video_format">Video format</string>
     <string name="player_audio_format">Audio format</string>
     <string name="player_audio_language">Audio language</string>
-    <string name="player_video_profile">Video profile</string>
+    <string name="player_video_profile">Resolution</string>
     <string name="player_auto_frame_rate">Auto Frame Rate</string>
     <string name="player_quality_auto">Auto</string>
     <string name="player_quality_on">On</string>
@@ -174,4 +174,6 @@
     <string name="update_checking">Checking for updates…</string>
     <string name="update_no_new_version">PeerIcheTV is up to date.</string>
     <string name="mini_section_rail">Show mini section rail</string>
+    <string name="player_default_resolution">Default resolution</string>
+    <string name="player_resolution_auto">Auto (fit screen)</string>
 </resources>

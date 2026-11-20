@@ -22,6 +22,27 @@ class SettingsBackupCodecTest {
     }
 
     @Test
+    fun restoresPlayerQualityAndInterfacePreferences() {
+        val json = JsonParser.parseString(
+            """{"playerVideoProfile":{"type":"int","value":720},"playerVideoCodec":{"type":"string","value":"video/avc"},"playerAutoFrameRate":{"type":"boolean","value":true},"searchTimeoutMs":{"type":"long","value":8000},"subtitleBackgroundOpacity":{"type":"float","value":0.5}}"""
+        ).asJsonObject
+
+        val values = SettingsBackupCodec.decode(json)
+
+        assertEquals(720, values["playerVideoProfile"])
+        assertEquals("video/avc", values["playerVideoCodec"])
+        assertEquals(true, values["playerAutoFrameRate"])
+        assertEquals(8000L, values["searchTimeoutMs"])
+    }
+
+    @Test
+    fun exportsOnlyKeysThatCanBeRestored() {
+        assertEquals(true, SettingsBackupCodec.isBackedUp("playerVideoProfile"))
+        assertEquals(false, SettingsBackupCodec.isBackedUp("proxyPassword"))
+        assertEquals(false, SettingsBackupCodec.isBackedUp("someFutureKey"))
+    }
+
+    @Test
     fun rejectsUnknownAndProxyKeysBeforeApplyingAnything() {
         val unknown = JsonParser.parseString("""{"admin":{"type":"boolean","value":true}}""").asJsonObject
         val secret = JsonParser.parseString("""{"proxyPassword":{"type":"string","value":"secret"}}""").asJsonObject

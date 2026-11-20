@@ -1,8 +1,8 @@
 # PeerIcheTV
 
-**Клиент PeerTube для Android TV и планшетов на Kotlin и Media3.**
+**Клиент PeerTube для Android TV на Kotlin и Media3.**
 
-PeerIcheTV подключается к серверам PeerTube с открытым API. Интерфейс рассчитан на управление пультом телевизора и сенсорный экран.
+PeerIcheTV подключается к серверам PeerTube с открытым API. Приложение рассчитано на устройства Android TV и управление пультом.
 
 Дизайн интерфейса вдохновлён проектом [SmartTube](https://github.com/yuliskov/SmartTube) — медиаклиентом для Android TV. PeerIcheTV — независимый проект, не связанный с SmartTube.
 
@@ -28,7 +28,7 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 ## Скачать и установить
 
-Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerIcheTV/releases/latest) и установите на Android TV или планшет. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
+Скачайте APK со страницы [Releases](https://github.com/alex-rek/PeerIcheTV/releases/latest) и установите на устройство Android TV. Android может попросить разрешить установку приложений из источника, которым вы открыли APK.
 
 ## Сборка из исходного кода
 
@@ -48,6 +48,16 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 APK появится по пути `app/build/outputs/apk/debug/app-universal-debug.apk`.
 
+### Baseline Profile
+
+В release-сборки входит baseline profile (`app/src/release/generated/baselineProfiles`), который ускоряет запуск и первые экраны на ТВ-приставках. После крупных изменений интерфейса обновите его на подключённом устройстве Android TV (Android 13+, root не нужен):
+
+```powershell
+$env:ANDROID_SERIAL = "<серийный номер устройства>"; .\gradlew.bat :app:generateBaselineProfile
+```
+
+`.\gradlew.bat :baselineprofile:connectedBenchmarkReleaseAndroidTest` сравнивает холодный старт с профилем и без него. Обе задачи переустанавливают приложение на устройстве и стирают его данные.
+
 ### Подписанный release APK
 
 В Android Studio выберите **Build → Generate Signed Bundle / APK → APK**, вариант `release` и подпишите сборку своим ключом. Надёжно сохраните файл хранилища ключей и пароли; не добавляйте их в Git и не загружайте на GitHub.
@@ -64,4 +74,10 @@ APK появится по пути `app/build/outputs/apk/debug/app-universal-de
 
 ## Статус проекта
 
-Проект активно развивается. Серверы PeerTube могут отличаться поведением API, форматами видео и доступностью. В репозитории пока нет файла лицензии.
+Проект активно развивается. Серверы PeerTube могут отличаться поведением API, форматами видео и доступностью.
+
+## Лицензия
+
+Copyright 2026 alex-rek. Распространяется по [лицензии Apache 2.0](LICENSE).
+
+Сторонние библиотеки распространяются по своим лицензиям; Google ML Kit (перевод на устройстве) используется на условиях Google ML Kit Terms of Service.

@@ -1,8 +1,8 @@
 # PeerIcheTV
 
-**PeerTube client for Android TV and tablets, built with Kotlin and Media3.**
+**PeerTube client for Android TV, built with Kotlin and Media3.**
 
-PeerIcheTV connects to PeerTube servers that expose the public PeerTube API. The app is designed for TV remote controls as well as touch screens.
+PeerIcheTV connects to PeerTube servers that expose the public PeerTube API. The app is designed for Android TV devices and is controlled with a TV remote.
 
 The interface design was inspired by [SmartTube](https://github.com/yuliskov/SmartTube), an Android TV media client. PeerIcheTV is an independent project and is not affiliated with SmartTube.
 
@@ -28,7 +28,7 @@ Features can vary with the selected server and the availability of videos in the
 
 ## Download and install
 
-Download the APK from the [Releases page](https://github.com/alex-rek/PeerIcheTV/releases/latest) and install it on an Android TV device or tablet. Android may ask you to allow installation from the app used to open the APK.
+Download the APK from the [Releases page](https://github.com/alex-rek/PeerIcheTV/releases/latest) and install it on an Android TV device. Android may ask you to allow installation from the app used to open the APK.
 
 ## Build from source
 
@@ -48,6 +48,16 @@ Clone the repository, open its folder in Android Studio, and allow Gradle sync t
 
 The APK is generated at `app/build/outputs/apk/debug/app-universal-debug.apk`.
 
+### Baseline profile
+
+Release builds ship a baseline profile (`app/src/release/generated/baselineProfiles`) that speeds up startup and the first screens on TV boxes. After larger UI changes, regenerate it on a connected Android TV device (Android 13+, no root needed):
+
+```powershell
+$env:ANDROID_SERIAL = "<device serial>"; .\gradlew.bat :app:generateBaselineProfile
+```
+
+`.\gradlew.bat :baselineprofile:connectedBenchmarkReleaseAndroidTest` compares cold start with and without the profile. Both tasks reinstall the app on the device, which clears its data.
+
 ### Signed release APK
 
 In Android Studio, choose **Build → Generate Signed Bundle / APK → APK**, select the `release` variant, and sign it with your own keystore. Keep the keystore and its passwords in a safe place; do not commit or upload them.
@@ -64,4 +74,10 @@ Interface string resources are included for English, Russian, Arabic, German, Sp
 
 ## Project status
 
-This project is under active development. PeerTube servers differ in their API behavior, video formats, and availability. The repository does not currently include a license file.
+This project is under active development. PeerTube servers differ in their API behavior, video formats, and availability.
+
+## License
+
+Copyright 2026 alex-rek. Licensed under the [Apache License 2.0](LICENSE).
+
+Third-party libraries keep their own licenses; Google ML Kit (on-device translation) is used under the Google ML Kit Terms of Service.

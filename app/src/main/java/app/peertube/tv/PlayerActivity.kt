@@ -99,16 +99,16 @@ class PlayerActivity : AppCompatActivity() {
         val queueType = object : TypeToken<List<PlaybackQueueItem>>() {}.type
         val playbackQueue = runCatching { PeerTubeGson.instance.fromJson<List<PlaybackQueueItem>>(queueJson, queueType) ?: emptyList() }.getOrDefault(emptyList())
         val queueIndex = intent.getIntExtra("queueIndex", -1)
-        val afterVideoAction = intent.getStringExtra("afterVideoAction") ?: "finish"
+        val afterVideoAction = AfterVideoAction.fromKey(intent.getStringExtra("afterVideoAction"))
         val playerOverlayDurationSeconds = intent.getIntExtra("playerOverlayDurationSeconds", 3).let { if (it == 3 || it == 5 || it == 10) it else 3 }
         val showPlayerClock = intent.getBooleanExtra("showPlayerClock", false)
-        val playerClockPosition = intent.getStringExtra("playerClockPosition") ?: "top_right"
-        val playerClockSize = intent.getStringExtra("playerClockSize") ?: "medium"
-        val playerClockBackdrop = intent.getStringExtra("playerClockBackdrop") ?: "medium"
+        val playerClockPosition = ClockPosition.fromKey(intent.getStringExtra("playerClockPosition"))
+        val playerClockSize = ClockSize.fromKey(intent.getStringExtra("playerClockSize"))
+        val playerClockBackdrop = ClockBackdrop.fromKey(intent.getStringExtra("playerClockBackdrop"))
         val resumePlayback = intent.getBooleanExtra("resumePlayback", true)
         val seekStepSeconds = intent.getIntExtra("seekStepSeconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10
         val clock24Hour = intent.getBooleanExtra("clock24Hour", true)
-        val bufferProfile = intent.getStringExtra("bufferProfile")?.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"
+        val bufferProfile = BufferProfile.fromKey(intent.getStringExtra("bufferProfile"))
         val playerVolume = intent.getIntExtra("playerVolume", 100).coerceIn(0, 200)
         val watchedRecommendationThreshold = intent.getStringExtra("watchedRecommendationThreshold") ?: "never"
         val appTheme = PeerIcheThemes.fromId(
@@ -130,7 +130,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
 }
 
 @androidx.media3.common.util.UnstableApi
-@Composable private fun VideoScreen(initialUrl: String?, initialAudioOnly: Boolean, initialLiveStateId: Int?, uuid: String?, server: String?, title: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, playbackQueue: List<PlaybackQueueItem>, queueIndex: Int, queueJson: String, afterVideoAction: String, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: String, playerClockSize: String, playerClockBackdrop: String, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: String, playerVolume: Int, watchedRecommendationThreshold: String) {
+@Composable private fun VideoScreen(initialUrl: String?, initialAudioOnly: Boolean, initialLiveStateId: Int?, uuid: String?, server: String?, title: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, playbackQueue: List<PlaybackQueueItem>, queueIndex: Int, queueJson: String, afterVideoAction: AfterVideoAction, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: ClockPosition, playerClockSize: ClockSize, playerClockBackdrop: ClockBackdrop, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: BufferProfile, playerVolume: Int, watchedRecommendationThreshold: String) {
     val context = LocalContext.current
     var url by remember(initialUrl, uuid) { mutableStateOf(initialUrl?.takeIf(String::isNotBlank)) }
     var errorText by remember(initialUrl, uuid) { mutableStateOf<String?>(null) }
@@ -151,7 +151,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             if (details != null) {
                 videoDescription = details.description.orEmpty()
                 if (url == null) {
-                    url = details.playableUrl()
+                    url = details.playableUrl(defaultVideoHeight(context))
                     audioOnly = details.isAudioOnlySource()
                     if (url == null) errorText = when (details.state?.id ?: initialLiveStateId) {
                         4 -> context.getString(R.string.player_live_not_started)
@@ -220,7 +220,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             watchedRecommendationThreshold = watchedRecommendationThreshold,
             onVideoEnded = {
                 val nextIndex = queueIndex + 1
-                if ((afterVideoAction == "next" || afterVideoAction == "next_channel") && nextIndex in playbackQueue.indices) {
+                if (afterVideoAction.continuesQueue && nextIndex in playbackQueue.indices) {
                     val next = playbackQueue[nextIndex]
                     context.startActivity(Intent(context, PlayerActivity::class.java)
                         .putExtra("url", next.url)
@@ -236,16 +236,16 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                         .putExtra("channelDisplayName", next.channelDisplayName)
                         .putExtra("playbackQueue", queueJson)
                         .putExtra("queueIndex", nextIndex)
-                        .putExtra("afterVideoAction", afterVideoAction)
+                        .putExtra("afterVideoAction", afterVideoAction.key)
                         .putExtra("playerOverlayDurationSeconds", playerOverlayDurationSeconds)
                         .putExtra("showPlayerClock", showPlayerClock)
-                        .putExtra("playerClockPosition", playerClockPosition)
-                        .putExtra("playerClockSize", playerClockSize)
-                        .putExtra("playerClockBackdrop", playerClockBackdrop)
+                        .putExtra("playerClockPosition", playerClockPosition.key)
+                        .putExtra("playerClockSize", playerClockSize.key)
+                        .putExtra("playerClockBackdrop", playerClockBackdrop.key)
                         .putExtra("resumePlayback", resumePlayback)
                         .putExtra("seekStepSeconds", seekStepSeconds)
                         .putExtra("clock24Hour", clock24Hour)
-                        .putExtra("bufferProfile", bufferProfile)
+                        .putExtra("bufferProfile", bufferProfile.key)
                         .putExtra("playerVolume", playerVolume)
                         .putExtra("watchedRecommendationThreshold", watchedRecommendationThreshold))
                 }
@@ -257,7 +257,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
 }
 
 @androidx.media3.common.util.UnstableApi
-@Composable private fun Player(url: String, audioOnlySource: Boolean, uuid: String?, title: String, subtitles: List<VideoCaption>, description: String, server: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, afterVideoAction: String, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: String, playerClockSize: String, playerClockBackdrop: String, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: String, playerVolume: Int, watchedRecommendationThreshold: String, onVideoEnded: () -> Unit) {
+@Composable private fun Player(url: String, audioOnlySource: Boolean, uuid: String?, title: String, subtitles: List<VideoCaption>, description: String, server: String, views: Long, publishedAt: String?, channelName: String?, channelHost: String, channelDisplayName: String?, afterVideoAction: AfterVideoAction, playerOverlayDurationSeconds: Int, showPlayerClock: Boolean, playerClockPosition: ClockPosition, playerClockSize: ClockSize, playerClockBackdrop: ClockBackdrop, resumePlayback: Boolean, seekStepSeconds: Int, clock24Hour: Boolean, bufferProfile: BufferProfile, playerVolume: Int, watchedRecommendationThreshold: String, onVideoEnded: () -> Unit) {
     val context = LocalContext.current
 
     var playbackError by remember(url) { mutableStateOf<String?>(null) }
@@ -329,7 +329,8 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     var selectedVideoCodec by remember { mutableStateOf(playerPreferences.getString("playerVideoCodec", "auto") ?: "auto") }
     var selectedAudioFormat by remember { mutableStateOf(playerPreferences.getString("playerAudioFormat", "auto") ?: "auto") }
     var selectedAudioLanguage by remember { mutableStateOf(playerPreferences.getString("playerAudioLanguage", "auto") ?: "auto") }
-    var selectedVideoProfile by remember { mutableIntStateOf(playerPreferences.getInt("playerVideoProfile", 0)) }
+    // Starts from the default in Settings → Player; changes from the HD panel apply to this session only.
+    var selectedVideoProfile by remember { mutableIntStateOf(playerPreferences.getInt(DEFAULT_VIDEO_HEIGHT_KEY, 0).coerceAtLeast(0)) }
     var autoFrameRate by remember { mutableStateOf(playerPreferences.getBoolean("playerAutoFrameRate", false)) }
     var qualityFallbackAttempted by remember(url) { mutableStateOf(false) }
     var audioOnlyFallbackAttempted by remember(url) { mutableStateOf(false) }
@@ -389,19 +390,16 @@ private fun isValidPeerTubeServer(value: String): Boolean {
 
     val trackSelector = remember(context) { DefaultTrackSelector(context) }
     val loadControl = remember(context, bufferProfile) {
-        val (minBuffer, maxBuffer) = when (bufferProfile) {
-            "small" -> 15_000 to 45_000
-            "large" -> 60_000 to 180_000
-            "largest" -> 120_000 to 300_000
-            else -> 30_000 to 120_000
-        }
+        val (minBuffer, maxBuffer) = bufferProfile.minBufferMs to bufferProfile.maxBufferMs
         DefaultLoadControl.Builder().setBufferDurationsMs(minBuffer, maxBuffer, 2_500, 5_000).build()
     }
     val latestOnVideoEnded by rememberUpdatedState(onVideoEnded)
     val player = remember(context) {
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(ApiFactory.media3DataSourceFactory())
-        ExoPlayer.Builder(context).setMediaSourceFactory(mediaSourceFactory)
+        // Decoder fallback lets weak TV chips retry on another decoder instead of failing playback.
+        val renderersFactory = androidx.media3.exoplayer.DefaultRenderersFactory(context).setEnableDecoderFallback(true)
+        ExoPlayer.Builder(context, renderersFactory).setMediaSourceFactory(mediaSourceFactory)
             .setHandleAudioBecomingNoisy(true)
             .setTrackSelector(trackSelector).setLoadControl(loadControl).build().apply {
                 setAudioAttributes(
@@ -420,7 +418,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             thresholdMarked = true
         }
         if (!currentUuid.isNullOrBlank()) persistWatchProgress(context, currentUuid, 0L, flushNow = true)
-        if (latestAfterVideoAction == "repeat") {
+        if (latestAfterVideoAction == AfterVideoAction.REPEAT) {
             player.seekTo(0)
             player.playWhenReady = true
         } else latestOnVideoEnded()
@@ -452,7 +450,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 if (failedVideoMime && !qualityFallbackAttempted && fallbackHeight != null && currentItem != null) {
                     qualityFallbackAttempted = true
                     trackSelector.parameters = trackSelector.parameters.buildUpon().setPreferredVideoMimeType(null)
-                        .setMaxVideoSize(Int.MAX_VALUE, fallbackHeight).build()
+                        .clearOverridesOfType(C.TRACK_TYPE_VIDEO).setMaxVideoSize(Int.MAX_VALUE, fallbackHeight).build()
                     val resumeAt = player.currentPosition
                     player.setMediaItem(currentItem, resumeAt)
                     player.prepare()
@@ -612,11 +610,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         controlsInteractionToken++
     }
     fun toggleFavorite() {
-        val current = readFavoriteVideos(context).toMutableList()
-        if (current.any { it.uuid == favoriteVideo.uuid }) current.removeAll { it.uuid == favoriteVideo.uuid }
-        else current.add(favoriteVideo)
-        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("favorites", PeerTubeGson.instance.toJson(current.map(Video::compactForStorage))).apply()
-        isFavorite = current.any { it.uuid == favoriteVideo.uuid }
+        isFavorite = LibraryStore.toggleFavorite(context, favoriteVideo)
     }
     fun toggleSubscription() {
         val name = channelName?.takeIf(String::isNotBlank) ?: return
@@ -632,12 +626,9 @@ private fun isValidPeerTubeServer(value: String): Boolean {
             }
             return
         }
-        val current = readSavedSubscriptions(context).toMutableList()
-        val existing = current.firstOrNull { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
-        if (existing != null) current.remove(existing)
-        else current.add(VideoSubscription(name, host, channelDisplayName?.takeIf(String::isNotBlank) ?: name))
-        context.getSharedPreferences("peertube", Context.MODE_PRIVATE).edit().putString("subscriptions", PeerTubeGson.instance.toJson(current)).apply()
-        isSubscribed = existing == null
+        val channel = VideoSubscription(name, host, channelDisplayName?.takeIf(String::isNotBlank) ?: name)
+        val wasSubscribed = LibraryStore.subscriptions(context).any { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
+        isSubscribed = LibraryStore.setSubscribed(context, channel, !wasSubscribed).any { "${it.name}@${it.host}".equals("$name@$host", ignoreCase = true) }
     }
     fun activateControl(index: Int) {
         when (index) {
@@ -844,7 +835,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     val videoCodecs = listOf("auto") + videoFormats.mapNotNull { it.sampleMimeType }.distinct()
     val audioCodecs = listOf("auto") + audioFormats.mapNotNull { it.sampleMimeType }.distinct()
     val audioLanguages = listOf("auto") + audioFormats.mapNotNull { it.language?.takeIf(String::isNotBlank) }.distinct()
-    val videoProfiles = listOf(0) + videoFormats.map { it.height }.filter { it > 0 }.distinct().sortedDescending()
+    val videoProfiles = listOf(0) + (videoFormats.map { it.height }.filter { it > 0 } + listOfNotNull(selectedVideoProfile.takeIf { it > 0 })).distinct().sortedDescending()
     val availableTrackSignature = (videoFormats + audioFormats).joinToString("|") { "${it.sampleMimeType}:${it.height}:${it.language}:${it.channelCount}" }
 
     fun persistQualityPreference(key: String, value: Any) {
@@ -877,16 +868,27 @@ private fun isValidPeerTubeServer(value: String): Boolean {
     }
     fun applyVideoProfile(value: Int) {
         selectedVideoProfile = value
-        persistQualityPreference("playerVideoProfile", value)
-        val maxHeight = value.takeIf { it > 0 } ?: Int.MAX_VALUE
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setMaxVideoSize(Int.MAX_VALUE, maxHeight).build()
+        val builder = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+        player.trackSelectionParameters = if (value > 0) {
+            // An explicit choice may exceed the screen size, so drop the viewport limit, and pin the
+            // track so adaptive streaming does not start lower and ramp up.
+            val candidates = videoTrackGroups.flatMap { group -> (0 until group.length).filter { group.isTrackSupported(it) }.map { group to it } }
+            val pinned = candidates.filter { (group, index) -> group.getTrackFormat(index).height in 1..value }.maxByOrNull { (group, index) -> group.getTrackFormat(index).height }
+                ?: candidates.minByOrNull { (group, index) -> group.getTrackFormat(index).height }
+            builder.setMaxVideoSize(Int.MAX_VALUE, value).clearViewportSizeConstraints().apply {
+                if (pinned != null) setOverrideForType(androidx.media3.common.TrackSelectionOverride(pinned.first.mediaTrackGroup, pinned.second))
+            }.build()
+        } else {
+            // Automatic: the best track that fits the physical display.
+            builder.setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE).setViewportSizeToPhysicalDisplaySize(context, true).build()
+        }
     }
     fun cycleQualityRow(row: Int, delta: Int) {
         when (row) {
-            0 -> applyVideoCodec(videoCodecs.cyclicNext(selectedVideoCodec, delta))
-            1 -> applyAudioFormat(audioCodecs.cyclicNext(selectedAudioFormat, delta))
-            2 -> applyAudioLanguage(audioLanguages.cyclicNext(selectedAudioLanguage, delta))
-            3 -> applyVideoProfile(videoProfiles.cyclicNext(selectedVideoProfile, delta))
+            0 -> applyVideoProfile(videoProfiles.cyclicNext(selectedVideoProfile, delta))
+            1 -> applyVideoCodec(videoCodecs.cyclicNext(selectedVideoCodec, delta))
+            2 -> applyAudioFormat(audioCodecs.cyclicNext(selectedAudioFormat, delta))
+            3 -> applyAudioLanguage(audioLanguages.cyclicNext(selectedAudioLanguage, delta))
             4 -> {
                 if (Build.VERSION.SDK_INT >= 31 && context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)) {
                     autoFrameRate = !autoFrameRate
@@ -1151,7 +1153,7 @@ private fun isValidPeerTubeServer(value: String): Boolean {
                 size = playerClockSize,
                 backdrop = playerClockBackdrop,
                 is24Hour = clock24Hour,
-                modifier = Modifier.align(if (playerClockPosition == "top_left") androidx.compose.ui.Alignment.TopStart else androidx.compose.ui.Alignment.TopEnd).padding(24.dp)
+                modifier = Modifier.align(if (playerClockPosition == ClockPosition.TOP_LEFT) androidx.compose.ui.Alignment.TopStart else androidx.compose.ui.Alignment.TopEnd).padding(24.dp)
             )
         }
         if (controlsVisible) {
@@ -1194,17 +1196,17 @@ private fun isValidPeerTubeServer(value: String): Boolean {
         }
         if (qualityPanelOpen) {
             val panelTitles = listOf(
+                stringResource(R.string.player_video_profile),
                 stringResource(R.string.player_video_format),
                 stringResource(R.string.player_audio_format),
                 stringResource(R.string.player_audio_language),
-                stringResource(R.string.player_video_profile),
                 stringResource(R.string.player_auto_frame_rate)
             )
             val valueLabels = listOf(
+                if (selectedVideoProfile == 0) stringResource(R.string.player_resolution_auto) else "${selectedVideoProfile}p",
                 if (selectedVideoCodec == "auto") stringResource(R.string.player_quality_auto) else codecDisplayName(selectedVideoCodec),
                 if (selectedAudioFormat == "auto") stringResource(R.string.player_quality_auto) else codecDisplayName(selectedAudioFormat),
                 if (selectedAudioLanguage == "auto") stringResource(R.string.player_quality_auto) else java.util.Locale.forLanguageTag(selectedAudioLanguage).getDisplayName(java.util.Locale.getDefault()),
-                if (selectedVideoProfile == 0) stringResource(R.string.player_quality_auto) else "${selectedVideoProfile}p",
                 when {
                     Build.VERSION.SDK_INT < 31 || !context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK) -> stringResource(R.string.player_quality_unavailable)
                     autoFrameRate -> stringResource(R.string.player_quality_on)
@@ -1397,19 +1399,9 @@ private fun formatPlayerTime(timeMs: Long): String {
     else "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
-private fun readFavoriteVideos(context: Context): List<Video> {
-    val type = object : TypeToken<List<Video>>() {}.type
-    return runCatching {
-        PeerTubeGson.instance.fromJson<List<Video>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("favorites", "[]"), type) ?: emptyList()
-    }.getOrDefault(emptyList())
-}
+private fun readFavoriteVideos(context: Context): List<Video> = LibraryStore.favorites(context)
 
-private fun readSavedSubscriptions(context: Context): List<VideoSubscription> {
-    val type = object : TypeToken<List<VideoSubscription>>() {}.type
-    return runCatching {
-        PeerTubeGson.instance.fromJson<List<VideoSubscription>>(context.getSharedPreferences("peertube", Context.MODE_PRIVATE).getString("subscriptions", "[]"), type) ?: emptyList()
-    }.getOrDefault(emptyList())
-}
+private fun readSavedSubscriptions(context: Context): List<VideoSubscription> = LibraryStore.subscriptions(context)
 
 private class RemotePlayerView(context: Context) : PlayerView(context) {
     private var subtitleOffsetFromBottom = 0.20f
@@ -1457,7 +1449,7 @@ private class RemotePlayerView(context: Context) : PlayerView(context) {
     }
 }
 
-@Composable private fun PlayerClock(size: String, backdrop: String, is24Hour: Boolean, modifier: Modifier = Modifier) {
+@Composable private fun PlayerClock(size: ClockSize, backdrop: ClockBackdrop, is24Hour: Boolean, modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -1465,8 +1457,8 @@ private class RemotePlayerView(context: Context) : PlayerView(context) {
             now = System.currentTimeMillis()
         }
     }
-    val fontSize = when (size) { "small" -> 18.sp; "large" -> 32.sp; else -> 24.sp }
-    val backgroundColor = when (backdrop) { "none" -> Color.Transparent; "light" -> Color(0x55000000); "strong" -> Color(0xDD000000); else -> Color(0x99000000) }
+    val fontSize = size.fontSizeSp.sp
+    val backgroundColor = Color(backdrop.argb)
     val time = remember(now, is24Hour) { java.text.SimpleDateFormat(if (is24Hour) "HH:mm" else "h:mm a", java.util.Locale.getDefault()).format(java.util.Date(now)) }
     Text(time, modifier = modifier.background(backgroundColor).padding(horizontal = 10.dp, vertical = 6.dp), color = Color.White, fontSize = fontSize)
 }

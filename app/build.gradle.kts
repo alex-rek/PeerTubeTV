@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.baselineprofile)
 }
 
 val releaseSigningValues = listOf("KEYSTORE_PATH", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD")
@@ -14,7 +15,7 @@ if (hasAnyReleaseSigningValue && !hasAllReleaseSigningValues) {
 android {
     namespace = "app.peertube.tv"
     compileSdk = 37
-    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 35; versionCode = 29; versionName = "1.0.29" }
+    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 36; versionCode = 29; versionName = "1.0.29"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -51,6 +52,9 @@ android {
     }
     lint {
         baseline = file("lint-baseline.xml")
+        // Translations are contributed gradually (see README); untranslated strings fall back
+        // to English at runtime, so report them without failing the build.
+        warning += "MissingTranslation"
     }
 }
 
@@ -65,7 +69,6 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons.extended)
-    implementation(libs.androidx.navigation.compose)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.datasource.okhttp)
@@ -79,5 +82,12 @@ dependencies {
     implementation(libs.mlkit.language.id)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
+    implementation(libs.androidx.profileinstaller)
+    baselineProfile(project(":baselineprofile"))
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
