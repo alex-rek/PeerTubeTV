@@ -9,7 +9,7 @@ android {
     defaultConfig {
         // Baseline profiles can be generated without root from API 33; benchmarks run from API 28.
         minSdk = 28
-        targetSdk = 35
+        targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
