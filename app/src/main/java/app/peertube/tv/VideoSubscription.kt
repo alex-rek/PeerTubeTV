@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 
+@androidx.annotation.Keep
 data class VideoSubscription(val name: String, val host: String, val displayName: String)
 
 internal fun normalizeVideoSubscription(subscription: VideoSubscription): VideoSubscription? {

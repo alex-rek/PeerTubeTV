@@ -268,7 +268,7 @@ import java.util.Locale
         if (m.tab == "recommendations") m.loadRecommendations()
         val channelName = video.channel?.name ?: video.account?.name
         val channelHost = video.channel?.host ?: video.account?.host ?: video.host
-        val queueForPlayback = if (m.afterVideoAction == "next_channel" && !channelName.isNullOrBlank()) queue.filter {
+        val queueForPlayback = if (m.afterVideoAction == AfterVideoAction.NEXT_CHANNEL && !channelName.isNullOrBlank()) queue.filter {
             (it.channel?.name ?: it.account?.name).equals(channelName, ignoreCase = true) &&
                 (it.channel?.host ?: it.account?.host ?: it.host).equals(channelHost, ignoreCase = true)
         } else queue
@@ -305,28 +305,22 @@ import java.util.Locale
             .putExtra("channelDisplayName", video.channel?.displayName ?: video.account?.displayName ?: video.channel?.name ?: video.account?.name)
             .putExtra("playbackQueue", PeerTubeGson.instance.toJson(playbackQueue))
             .putExtra("queueIndex", queueIndex)
-            .putExtra("afterVideoAction", m.afterVideoAction)
+            .putExtra("afterVideoAction", m.afterVideoAction.key)
             .putExtra("playerOverlayDurationSeconds", m.playerOverlayDurationSeconds)
             .putExtra("showPlayerClock", m.showPlayerClock)
-            .putExtra("playerClockPosition", m.playerClockPosition)
-            .putExtra("playerClockSize", m.playerClockSize)
-            .putExtra("playerClockBackdrop", m.playerClockBackdrop)
+            .putExtra("playerClockPosition", m.playerClockPosition.key)
+            .putExtra("playerClockSize", m.playerClockSize.key)
+            .putExtra("playerClockBackdrop", m.playerClockBackdrop.key)
             .putExtra("resumePlayback", m.resumePlayback)
             .putExtra("seekStepSeconds", m.seekStepSeconds)
             .putExtra("clock24Hour", m.clock24Hour)
-            .putExtra("bufferProfile", m.bufferProfile)
+            .putExtra("bufferProfile", m.bufferProfile.key)
             .putExtra("playerVolume", m.playerVolume)
             .putExtra("watchedRecommendationThreshold", m.watchedRecommendationThreshold))
     }
     val toggleFavorite: (Video) -> Unit = { video ->
-        if (video.uuid in m.favoriteIds) {
-            m.favorites.removeAll { it.uuid == video.uuid }
-            m.favoriteIds.remove(video.uuid)
-        } else {
-            m.favorites.add(video)
-            m.favoriteIds[video.uuid] = true
-        }
-        m.save()
+        LibraryStore.toggleFavorite(context, video)
+        m.syncFavorites()
     }
     val openChannelVideos: (Video) -> Unit = { video ->
         val channelName = video.channel?.name ?: video.account?.name
@@ -385,7 +379,8 @@ import java.util.Locale
             }
         }
     }
-    val actions = HomeActions(openVideoInQueue, toggleFavorite, openChannelVideos, updateFocusedVideoMenu, navigateToSection, startVoiceSearch, submitSearch, exportBackup, launchBackupRestore)
+    // The callbacks only capture remembered/stable objects, so one instance lets the tabs skip recomposition.
+    val actions = remember(m, context) { HomeActions(openVideoInQueue, toggleFavorite, openChannelVideos, updateFocusedVideoMenu, navigateToSection, startVoiceSearch, submitSearch, exportBackup, launchBackupRestore) }
     Box(Modifier.fillMaxSize()) BoxScope@{
       Row(
         Modifier.fillMaxSize().onPreviewKeyEvent { event ->

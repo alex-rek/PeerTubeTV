@@ -8,7 +8,7 @@ import com.google.gson.reflect.TypeToken
 
 /** Gson still reads old persisted blobs; this adapter normalizes fields Gson can set to null via Unsafe. */
 internal object PeerTubeGson {
-    val instance: Gson = GsonBuilder().registerTypeAdapterFactory(object : TypeAdapterFactory {
+    val instance: Gson = GsonBuilder().registerTypeAdapter(VideoSubscription::class.java, VideoSubscriptionDeserializer).registerTypeAdapterFactory(object : TypeAdapterFactory {
         override fun <T : Any?> create(gson: Gson, type: TypeToken<T>): TypeAdapter<T>? {
             val raw = type.rawType
             if (raw !in NORMALIZED_TYPES) return null
@@ -25,7 +25,7 @@ internal object PeerTubeGson {
     private val NORMALIZED_TYPES = setOf(
         Video::class.java, VideoPage::class.java, PeerTubeInstance::class.java, InstancePage::class.java,
         PeerTubeChannelPage::class.java, PeerSeekPage::class.java, CaptionPage::class.java,
-        PlaybackQueueItem::class.java, DiscoveredServer::class.java, VideoSubscription::class.java
+        PlaybackQueueItem::class.java, DiscoveredServer::class.java
     )
 
     @Suppress("UNCHECKED_CAST")
@@ -58,10 +58,20 @@ internal object PeerTubeGson {
             streamStatus = (value.streamStatus as String?).orEmpty().ifBlank { "unknown" },
             metadataStatus = (value.metadataStatus as String?).orEmpty().ifBlank { "unknown" }
         ) as T
-        is VideoSubscription -> value.copy(
-            name = (value.name as String?).orEmpty(), host = (value.host as String?).orEmpty(),
-            displayName = (value.displayName as String?).orEmpty()
-        ) as T
         else -> value
+    }
+}
+
+/**
+ * Reads stored channel subscriptions. Releases up to 1.0.29 minified [VideoSubscription] without a keep
+ * rule, so its fields were stored under R8's names "a", "b" and "c" (name, host, displayName). Those are
+ * still read so that local subscriptions survive the update; new data uses the real field names.
+ */
+private object VideoSubscriptionDeserializer : com.google.gson.JsonDeserializer<VideoSubscription> {
+    override fun deserialize(json: com.google.gson.JsonElement, typeOfT: java.lang.reflect.Type, context: com.google.gson.JsonDeserializationContext): VideoSubscription? {
+        if (!json.isJsonObject) return null
+        val item = json.asJsonObject
+        fun text(name: String, legacy: String) = (item.get(name) ?: item.get(legacy))?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+        return VideoSubscription(text("name", "a"), text("host", "b"), text("displayName", "c"))
     }
 }

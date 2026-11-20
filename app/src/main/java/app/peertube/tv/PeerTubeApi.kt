@@ -10,7 +10,9 @@ import retrofit2.http.Query
 import okhttp3.OkHttpClient
 import java.util.LinkedHashMap
 
+@androidx.annotation.Keep
 data class VideoPage(val data: List<Video> = emptyList(), val total: Int = 0)
+@androidx.annotation.Keep
 data class PlaybackQueueItem(
     val uuid: String,
     val server: String,
@@ -24,10 +26,15 @@ data class PlaybackQueueItem(
     val audioOnly: Boolean = false,
     val liveStateId: Int? = null
 )
+@androidx.annotation.Keep
 data class LiveVideoSession(val startDate: String? = null, val endDate: String? = null)
+@androidx.annotation.Keep
 data class CaptionPage(val data: List<VideoCaption> = emptyList())
+@androidx.annotation.Keep
 data class VideoCaption(val language: CaptionLanguage? = null, val fileUrl: String? = null, val captionPath: String? = null, val automaticallyGenerated: Boolean? = null)
+@androidx.annotation.Keep
 data class CaptionLanguage(val id: String? = null, val label: String? = null)
+@androidx.annotation.Keep
 data class Video(val uuid: String, val name: String, val description: String? = "", val thumbnailPath: String? = null, val thumbnailUrl: String? = null, val views: Long = 0, val duration: Long = 0, val tags: List<String>? = null, val channel: Channel? = null, val account: Account? = null, val host: String? = null, val url: String? = null, val files: List<VideoFile>? = null, val streamingPlaylists: List<StreamingPlaylist>? = null, val publishedAt: String? = null, val isLive: Boolean? = null, val state: VideoState? = null, val category: VideoCategory? = null, val nsfw: Boolean = false, val previewPath: String? = null) {
     private fun allMediaFiles(): List<VideoFile> = files.orEmpty() + streamingPlaylists.orEmpty().flatMap { it.files.orEmpty() }
 
@@ -60,12 +67,19 @@ data class Video(val uuid: String, val name: String, val description: String? = 
         }
     }
 }
+@androidx.annotation.Keep
 data class Channel(val id: Int? = null, val displayName: String? = null, val name: String? = null, val host: String? = null)
+@androidx.annotation.Keep
 data class Account(val displayName: String? = null, val name: String? = null, val host: String? = null)
+@androidx.annotation.Keep
 data class VideoFile(val fileUrl: String? = null, val resolution: Resolution? = null, val hasVideo: Boolean? = null)
+@androidx.annotation.Keep
 data class Resolution(val id: Int = 0, val label: String? = null)
+@androidx.annotation.Keep
 data class StreamingPlaylist(val playlistUrl: String? = null, val files: List<VideoFile>? = null)
+@androidx.annotation.Keep
 data class VideoState(val id: Int? = null, val label: String? = null)
+@androidx.annotation.Keep
 data class VideoCategory(val id: Int? = null, val label: String? = null)
 
 private val ISO_DATE_REGEX = Regex("""^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$""")
@@ -111,11 +125,17 @@ interface PeerTubeApi {
     @GET("api/v1/videos/{id}/comment-threads") suspend fun commentThreads(@Path("id") id: String, @Query("start") start: Int = 0, @Query("count") count: Int = 20, @Query("sort") sort: String = "-createdAt"): com.google.gson.JsonObject
 }
 
+@androidx.annotation.Keep
 data class InstancePage(val total: Int = 0, val data: List<PeerTubeInstance> = emptyList())
+@androidx.annotation.Keep
 data class PeerTubeChannelPage(val total: Int = 0, val data: List<PeerTubeChannel> = emptyList())
+@androidx.annotation.Keep
 data class PeerTubeChannel(val id: Int? = null, val name: String? = null, val displayName: String? = null, val host: String? = null, val videosCount: Long? = null)
+@androidx.annotation.Keep
 data class PeerTubeInstance(val host: String, val name: String? = null, val signupAllowed: Boolean? = null, val totalVideos: Long? = null, val health: Int? = null, val languages: List<String> = emptyList(), val version: String? = null, val country: String? = null, val totalInstanceFollowers: Long? = null, val totalInstanceFollowing: Long? = null)
+@androidx.annotation.Keep
 data class PeerTubeCustomConfig(val instance: PeerTubeInstanceConfig? = null)
+@androidx.annotation.Keep
 data class PeerTubeInstanceConfig(val languages: List<String> = emptyList())
 
 interface InstanceDirectoryApi {
@@ -131,7 +151,9 @@ interface SepiaSearchApi {
     @GET("api/v1/search/videos") suspend fun videos(@Query("search") search: String? = null, @Query("start") start: Int = 0, @Query("count") count: Int = 30, @Query("sort") sort: String? = null, @Query("categoryOneOf") categoryOneOf: Int? = null, @Query("durationMin") durationMin: Int? = null, @Query("durationMax") durationMax: Int? = null, @Query("isLive") isLive: Boolean? = null, @Query("includeScheduledLive") includeScheduledLive: Boolean? = null, @Query("languageOneOf[]") languageOneOf: String? = null, @Query("nsfw") nsfw: String? = null): VideoPage
 }
 
+@androidx.annotation.Keep
 data class PeerSeekPage(val videos: List<PeerSeekVideo> = emptyList(), val total: Int = 0, val page: Int = 1, val size: Int = 24)
+@androidx.annotation.Keep
 data class PeerSeekVideo(
     val id: String? = null, val uuid: String? = null, val title: String? = null, val name: String? = null,
     val description: String? = null, val thumbnailUrl: String? = null, val videoUrl: String? = null,

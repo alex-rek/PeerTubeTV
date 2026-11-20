@@ -48,6 +48,16 @@ Clone the repository, open its folder in Android Studio, and allow Gradle sync t
 
 The APK is generated at `app/build/outputs/apk/debug/app-universal-debug.apk`.
 
+### Baseline profile
+
+Release builds ship a baseline profile (`app/src/release/generated/baselineProfiles`) that speeds up startup and the first screens on TV boxes. After larger UI changes, regenerate it on a connected Android TV device (Android 13+, no root needed):
+
+```powershell
+$env:ANDROID_SERIAL = "<device serial>"; .\gradlew.bat :app:generateBaselineProfile
+```
+
+`.\gradlew.bat :baselineprofile:connectedBenchmarkReleaseAndroidTest` compares cold start with and without the profile. Both tasks reinstall the app on the device, which clears its data.
+
 ### Signed release APK
 
 In Android Studio, choose **Build → Generate Signed Bundle / APK → APK**, select the `release` variant, and sign it with your own keystore. Keep the keystore and its passwords in a safe place; do not commit or upload them.

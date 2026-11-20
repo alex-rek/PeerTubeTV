@@ -24,7 +24,8 @@ class ServerDiscoveryJobService : JobService() {
                 ServerDiscoveryManager(applicationContext, repository).discover(server)
             } catch (_: CancellationException) {
                 return@launch
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                logFailure("Scheduled server discovery failed", error)
                 // A transient directory or federation failure is retried at the next scheduled interval.
             } finally {
                 jobFinished(params, false)

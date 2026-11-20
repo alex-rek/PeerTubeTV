@@ -150,6 +150,7 @@ private fun sameVideoIdentity(first: Video, second: Video): Boolean {
     return firstUrl != null && firstUrl == secondUrl
 }
 
+@androidx.annotation.Keep
 data class DiscoveredServer(
     val host: String, val name: String? = null, val version: String? = null, val languages: List<String> = emptyList(),
     val country: String? = null, val discoveredFrom: Set<String> = emptySet(), val following: Set<String> = emptySet(),

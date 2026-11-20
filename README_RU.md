@@ -48,6 +48,16 @@ PeerIcheTV подключается к серверам PeerTube с открыт
 
 APK появится по пути `app/build/outputs/apk/debug/app-universal-debug.apk`.
 
+### Baseline Profile
+
+В release-сборки входит baseline profile (`app/src/release/generated/baselineProfiles`), который ускоряет запуск и первые экраны на ТВ-приставках. После крупных изменений интерфейса обновите его на подключённом устройстве Android TV (Android 13+, root не нужен):
+
+```powershell
+$env:ANDROID_SERIAL = "<серийный номер устройства>"; .\gradlew.bat :app:generateBaselineProfile
+```
+
+`.\gradlew.bat :baselineprofile:connectedBenchmarkReleaseAndroidTest` сравнивает холодный старт с профилем и без него. Обе задачи переустанавливают приложение на устройстве и стирают его данные.
+
 ### Подписанный release APK
 
 В Android Studio выберите **Build → Generate Signed Bundle / APK → APK**, вариант `release` и подпишите сборку своим ключом. Надёжно сохраните файл хранилища ключей и пароли; не добавляйте их в Git и не загружайте на GitHub.

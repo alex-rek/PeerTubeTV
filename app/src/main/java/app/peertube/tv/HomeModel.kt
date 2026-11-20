@@ -28,7 +28,7 @@ internal val supportedUiLanguages = listOf("en", "ru", "es", "fr", "de", "pt", "
 
 private data class SavedContentSnapshot(
     val watched: List<String>, val excluded: List<String>, val hidden: Set<String>,
-    val history: List<Video>, val favorites: List<Video>, val subscriptions: List<VideoSubscription>
+    val history: List<Video>
 )
 
 class HomeModel : ViewModel() {
@@ -76,17 +76,17 @@ class HomeModel : ViewModel() {
     var error by mutableStateOf<String?>(null)
     var isLoadingRecommendations by mutableStateOf(false)
     var gridMode by mutableStateOf(true)
-    var afterVideoAction by mutableStateOf("finish")
+    var afterVideoAction by mutableStateOf(AfterVideoAction.FINISH)
         private set
     var playerOverlayDurationSeconds by mutableIntStateOf(3)
         private set
     var showPlayerClock by mutableStateOf(false)
         private set
-    var playerClockPosition by mutableStateOf("top_right")
+    var playerClockPosition by mutableStateOf(ClockPosition.TOP_RIGHT)
         private set
-    var playerClockSize by mutableStateOf("medium")
+    var playerClockSize by mutableStateOf(ClockSize.MEDIUM)
         private set
-    var playerClockBackdrop by mutableStateOf("medium")
+    var playerClockBackdrop by mutableStateOf(ClockBackdrop.NONE)
         private set
     var resumePlayback by mutableStateOf(true)
         private set
@@ -125,7 +125,7 @@ class HomeModel : ViewModel() {
         private set
     var searchCountryCode by mutableStateOf("")
         private set
-    var bufferProfile by mutableStateOf("medium")
+    var bufferProfile by mutableStateOf(BufferProfile.MEDIUM)
         private set
     var playerVolume by mutableIntStateOf(100)
         private set
@@ -239,8 +239,16 @@ class HomeModel : ViewModel() {
         searchSettings = searchSettingsRepository!!.read()
         serverRepository = ServerRepository(context).also { it.seedBundled(context) }
         serverDiscoveryManager = ServerDiscoveryManager(context, serverRepository!!)
-        serverDiscoveryManager!!.schedulePeriodic()
-        discoveredServers = serverRepository!!.all()
+        // Job scheduling and parsing the server catalog take ~70 ms on a TV box: keep them off the main thread.
+        val repository = serverRepository!!
+        val discoveryManager = serverDiscoveryManager!!
+        viewModelScope.launch {
+            val servers = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { discoveryManager.schedulePeriodic() }.onFailure { android.util.Log.w("PeerIcheTV", "Could not schedule server discovery", it) }
+                repository.all()
+            }
+            if (discoveredServers.isEmpty()) discoveredServers = servers
+        }
         serverSortMode = prefs?.getString("serverSortMode", null)
             ?: if (prefs?.getBoolean("serverAvailabilitySort", false) == true) "availability" else "default"
         val discovery = serverDiscoveryManager!!.settings()
@@ -257,12 +265,12 @@ class HomeModel : ViewModel() {
         homePageServer = prefs?.getString("homeServer", "").orEmpty()
         homePageChannel = prefs?.getString("homeChannel", "").orEmpty()
         gridMode = prefs?.getBoolean("gridMode", true) ?: true
-        afterVideoAction = prefs?.getString("afterVideoAction", "finish") ?: "finish"
+        afterVideoAction = AfterVideoAction.fromKey(prefs?.getString("afterVideoAction", null))
         playerOverlayDurationSeconds = (prefs?.getInt("playerOverlayDurationSeconds", 3) ?: 3).coerceIn(3, 10).let { if (it == 3 || it == 5 || it == 10) it else 3 }
         showPlayerClock = prefs?.getBoolean("showPlayerClock", true) ?: true
-        playerClockPosition = prefs?.getString("playerClockPosition", "top_right")?.takeIf { it == "top_left" || it == "top_right" } ?: "top_right"
-        playerClockSize = prefs?.getString("playerClockSize", "medium")?.takeIf { it == "small" || it == "medium" || it == "large" } ?: "medium"
-        playerClockBackdrop = prefs?.getString("playerClockBackdrop", "none")?.takeIf { it == "none" || it == "light" || it == "medium" || it == "strong" } ?: "none"
+        playerClockPosition = ClockPosition.fromKey(prefs?.getString("playerClockPosition", null))
+        playerClockSize = ClockSize.fromKey(prefs?.getString("playerClockSize", null))
+        playerClockBackdrop = ClockBackdrop.fromKey(prefs?.getString("playerClockBackdrop", null))
         if (prefs?.getBoolean("resumePlaybackDefaultMigrated", false) != true) {
             resumePlayback = true
             prefs?.edit()?.putBoolean("resumePlayback", true)?.putBoolean("resumePlaybackDefaultMigrated", true)?.apply()
@@ -334,7 +342,7 @@ class HomeModel : ViewModel() {
                 editor?.putBoolean("showPlayerClock", true)
             }
             if (prefs?.getString("playerClockBackdrop", "medium") == "medium") {
-                playerClockBackdrop = "none"
+                playerClockBackdrop = ClockBackdrop.NONE
                 editor?.putString("playerClockBackdrop", "none")
             }
             editor?.putBoolean("playerDefaults20261021Applied", true)?.apply()
@@ -361,7 +369,7 @@ class HomeModel : ViewModel() {
             prefs?.edit()?.putString("searchCountryCode", detectedCountry)
                 ?.putBoolean("countryInitialized", true)?.apply()
         }
-        bufferProfile = prefs?.getString("bufferProfile", "medium")?.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"
+        bufferProfile = BufferProfile.fromKey(prefs?.getString("bufferProfile", null))
         playerVolume = (prefs?.getInt("playerVolume", 100) ?: 100).coerceIn(0, 200)
         peerSeekEnabled = SearchSource.PEERSEEK in searchSettings.enabled
         videoSortMode = prefs?.getString("videoSortMode", "newest")?.takeIf { it in setOf("newest", "popular", "title") } ?: "newest"
@@ -379,13 +387,9 @@ class HomeModel : ViewModel() {
         val historyTimeType = object : TypeToken<Map<String, Long>>() {}.type
         runCatching { historyViewedAt.putAll(PeerTubeGson.instance.fromJson<Map<String, Long>>(prefs?.getString("historyViewedAt", "{}"), historyTimeType) ?: emptyMap()) }
         history.forEach { if (it.uuid !in historyViewedAt) historyViewedAt[it.uuid] = System.currentTimeMillis() }
-        runCatching { favorites.addAll(PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), type) ?: emptyList()) }
+        favorites.addAll(LibraryStore.favorites(context))
         favorites.forEach { favoriteIds[it.uuid] = true }
-        val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
-        runCatching {
-            localSubscriptions.addAll(PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
-                .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) })
-        }
+        localSubscriptions.addAll(LibraryStore.subscriptions(context))
         subscriptions.clear(); subscriptions.addAll(localSubscriptions)
         accountObserverJob?.cancel()
         accountObserverJob = viewModelScope.launch {
@@ -405,11 +409,11 @@ class HomeModel : ViewModel() {
     }
     fun save() {
         val preferences = prefs ?: return
-        preferences.edit().putString("server", server).putBoolean("gridMode", gridMode).putString("afterVideoAction", afterVideoAction)
+        preferences.edit().putString("server", server).putBoolean("gridMode", gridMode).putString("afterVideoAction", afterVideoAction.key)
             .putString("homeContentMode", homePageDisplayMode).putString("homeInterests", PeerTubeGson.instance.toJson(homePageInterests.sorted()))
             .putString("homeServer", homePageServer).putString("homeChannel", homePageChannel)
             .putInt("playerOverlayDurationSeconds", playerOverlayDurationSeconds).putBoolean("showPlayerClock", showPlayerClock)
-            .putString("playerClockPosition", playerClockPosition).putString("playerClockSize", playerClockSize).putString("playerClockBackdrop", playerClockBackdrop)
+            .putString("playerClockPosition", playerClockPosition.key).putString("playerClockSize", playerClockSize.key).putString("playerClockBackdrop", playerClockBackdrop.key)
             .putBoolean("resumePlayback", resumePlayback).putString("watchedRecommendationThreshold", watchedRecommendationThreshold)
             .putString("recommendationBasis", recommendationBasis).putString("recommendationLanguage", recommendationLanguage)
             .putBoolean("peerSeekEnabled", peerSeekEnabled).putString("videoSortMode", videoSortMode).putBoolean("navigationSounds", navigationSounds)
@@ -417,11 +421,11 @@ class HomeModel : ViewModel() {
             .putFloat("contextMenuHoldSeconds", contextMenuHoldSeconds).putInt("seekStepSeconds", seekStepSeconds).putString("launchTab", launchTab)
             .putString("selectedTheme", selectedTheme).putBoolean("showSearchIcon", showSearchIcon).putBoolean("miniSectionRailEnabled", miniSectionRailEnabled).putFloat("uiScale", uiScale).putFloat("gridScale", gridScale)
             .putBoolean("clock24Hour", clock24Hour).putString("searchCountryCode", searchCountryCode).putString("serverSortMode", serverSortMode)
-            .putString("bufferProfile", bufferProfile).putInt("playerVolume", playerVolume).apply()
+            .putString("bufferProfile", bufferProfile.key).putInt("playerVolume", playerVolume).apply()
 
         val content = SavedContentSnapshot(
             watchedVideoIds.keys.toList().takeLast(1_000), excludedRecommendationIds.toList().takeLast(5_000), hiddenSections.toSet(),
-            history.toList().take(100), favorites.toList().takeLast(1_000), localSubscriptions.toList().takeLast(1_000)
+            history.toList().take(100)
         )
         synchronized(contentSaveLock) {
             if (content == lastQueuedContentSnapshot) return
@@ -432,8 +436,6 @@ class HomeModel : ViewModel() {
                     "excludedRecommendationIds" to PeerTubeGson.instance.toJson(content.excluded),
                     "hiddenSections" to PeerTubeGson.instance.toJson(content.hidden),
                     "history" to PeerTubeGson.instance.toJson(content.history.map(Video::compactForStorage)),
-                    "favorites" to PeerTubeGson.instance.toJson(content.favorites.map(Video::compactForStorage)),
-                    "subscriptions" to PeerTubeGson.instance.toJson(content.subscriptions)
                 )
                 synchronized(contentSaveLock) {
                     if (content != lastQueuedContentSnapshot) return@execute
@@ -546,7 +548,7 @@ class HomeModel : ViewModel() {
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
+            } catch (error: Exception) { logFailure("loadHomePage failed", error);
                 if (requestId == homePageRequestId) {
                     homePageVideos = emptyList()
                     homePageError = error.localizedMessage ?: appContext?.getString(R.string.home_source_invalid)
@@ -586,7 +588,7 @@ class HomeModel : ViewModel() {
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (error: Exception) {
+            } catch (error: Exception) { logFailure("loadMoreHomePage failed", error);
                 if (requestId == homePageRequestId) {
                     homePageHasMore = false
                     homePageError = error.localizedMessage ?: appContext?.getString(R.string.error_request)
@@ -634,12 +636,12 @@ class HomeModel : ViewModel() {
         save()
     }
     @JvmName("updateAfterVideoAction")
-    fun setAfterVideoAction(action: String) { afterVideoAction = action; save() }
+    fun setAfterVideoAction(action: AfterVideoAction) { afterVideoAction = action; save() }
     fun updatePlayerOverlayDuration(seconds: Int) { playerOverlayDurationSeconds = seconds.coerceIn(3, 10).let { if (it == 3 || it == 5 || it == 10) it else 3 }; save() }
     fun updateShowPlayerClock(show: Boolean) { showPlayerClock = show; save() }
-    fun updatePlayerClockPosition(position: String) { playerClockPosition = if (position == "top_left") "top_left" else "top_right"; save() }
-    fun updatePlayerClockSize(size: String) { playerClockSize = size.takeIf { it == "small" || it == "medium" || it == "large" } ?: "medium"; save() }
-    fun updatePlayerClockBackdrop(backdrop: String) { playerClockBackdrop = backdrop.takeIf { it == "none" || it == "light" || it == "medium" || it == "strong" } ?: "medium"; save() }
+    fun updatePlayerClockPosition(position: ClockPosition) { playerClockPosition = position; save() }
+    fun updatePlayerClockSize(size: ClockSize) { playerClockSize = size; save() }
+    fun updatePlayerClockBackdrop(backdrop: ClockBackdrop) { playerClockBackdrop = backdrop; save() }
     fun updateResumePlayback(resume: Boolean) { resumePlayback = resume; save() }
     fun updateWatchedRecommendationThreshold(threshold: String) {
         watchedRecommendationThreshold = threshold.takeIf { it in setOf("never", "percent_5", "percent_10", "percent_50", "complete") } ?: "never"
@@ -661,7 +663,7 @@ class HomeModel : ViewModel() {
     fun updateGridScale(scale: Float) { gridScale = scale.coerceIn(0.5f, 1.5f); save() }
     fun updateClock24Hour(enabled: Boolean) { clock24Hour = enabled; save() }
     fun updateSearchCountry(code: String) { searchCountryCode = code.uppercase(Locale.ROOT); prefs?.edit()?.putBoolean("countryInitialized", true)?.apply(); save() }
-    fun updateBufferProfile(profile: String) { bufferProfile = profile.takeIf { it in listOf("small", "medium", "large", "largest") } ?: "medium"; save() }
+    fun updateBufferProfile(profile: BufferProfile) { bufferProfile = profile; save() }
     fun updatePlayerVolume(value: Int) { playerVolume = value.coerceIn(0, 200); save() }
     fun updatePeerSeekEnabled(enabled: Boolean) = updateSearchSourceEnabled(SearchSource.PEERSEEK, enabled)
     fun updateSearchSourceEnabled(source: SearchSource, enabled: Boolean) {
@@ -738,7 +740,7 @@ class HomeModel : ViewModel() {
             try {
                 manager.discover(server)
                 discoveredServers = serverRepository?.all().orEmpty()
-            } catch (e: Exception) { discoveryError = e.localizedMessage ?: e.javaClass.simpleName }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("runServerDiscovery failed", e); discoveryError = e.localizedMessage ?: e.javaClass.simpleName }
             finally { isDiscoveringServers = false }
         }
     }
@@ -795,7 +797,7 @@ class HomeModel : ViewModel() {
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Exception) { logFailure("checkCachedServersAvailability failed", e);
                 serverAvailabilityCheckSummary = appContext?.getString(R.string.server_check_failed, e.localizedMessage ?: e.javaClass.simpleName)
             } finally {
                 isCheckingServerAvailability = false
@@ -823,7 +825,7 @@ class HomeModel : ViewModel() {
                 val configuration = ApiFactory.config("https://$normalized").customConfig()
                 serverRepository?.merge(listOf(DiscoveredServer(normalized, version = null, languages = configuration.instance?.languages.orEmpty(), discoveredFrom = setOf("manual"), apiStatus = "available", lastCheckedAt = System.currentTimeMillis())))
                 withContext(kotlinx.coroutines.Dispatchers.Main) { discoveredServers = serverRepository?.all().orEmpty(); discoveryError = null }
-            } catch (e: Exception) { withContext(kotlinx.coroutines.Dispatchers.Main) { discoveryError = e.localizedMessage ?: "PeerTube API could not be verified" } }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("addServerManually failed", e); withContext(kotlinx.coroutines.Dispatchers.Main) { discoveryError = e.localizedMessage ?: "PeerTube API could not be verified" } }
         }
     }
     fun updateVideoSortMode(mode: String) { videoSortMode = mode.takeIf { it in setOf("newest", "popular", "title") } ?: "newest"; save() }
@@ -911,16 +913,13 @@ class HomeModel : ViewModel() {
         prefs?.edit()?.putString("historyViewedAt", PeerTubeGson.instance.toJson(historyViewedAt))?.apply()
     }
     fun syncSubscriptions() {
-        val subscriptionType = object : TypeToken<List<VideoSubscription>>() {}.type
-        val stored = runCatching { PeerTubeGson.instance.fromJson<List<VideoSubscription>>(prefs?.getString("subscriptions", "[]"), subscriptionType)
-            .orEmpty().mapNotNull { it?.let(::normalizeVideoSubscription) } }.getOrDefault(emptyList())
+        val stored = appContext?.let(LibraryStore::subscriptions) ?: return
         localSubscriptions.clear()
         localSubscriptions.addAll(stored)
         if (activeAccountId == null) { subscriptions.clear(); subscriptions.addAll(stored) }
     }
     fun syncFavorites() {
-        val videoType = object : TypeToken<List<Video>>() {}.type
-        val stored = runCatching { PeerTubeGson.instance.fromJson<List<Video>>(prefs?.getString("favorites", "[]"), videoType) ?: emptyList() }.getOrDefault(emptyList())
+        val stored = appContext?.let(LibraryStore::favorites) ?: return
         favorites.clear()
         favorites.addAll(stored)
         favoriteIds.clear()
@@ -932,10 +931,8 @@ class HomeModel : ViewModel() {
         if (subscribed) subscriptions.add(channel) else current?.let(subscriptions::remove)
         val accountId = activeAccountId
         if (accountId == null) {
-            val local = localSubscriptions.firstOrNull { "${it.name}@${it.host}".equals("${channel.name}@${channel.host}", ignoreCase = true) }
-            if (subscribed && local == null) localSubscriptions.add(channel)
-            if (!subscribed) local?.let(localSubscriptions::remove)
-            save()
+            val stored = appContext?.let { LibraryStore.setSubscribed(it, channel, subscribed) } ?: return
+            localSubscriptions.clear(); localSubscriptions.addAll(stored)
             return
         }
         val context = appContext ?: return
@@ -946,9 +943,9 @@ class HomeModel : ViewModel() {
     }
     fun removeSubscription(channel: VideoSubscription) = changeSubscription(channel, false)
     fun removeLocalSubscription(channel: VideoSubscription) {
-        localSubscriptions.removeAll { "${it.name}@${it.host}".equals("${channel.name}@${channel.host}", ignoreCase = true) }
+        val stored = appContext?.let { LibraryStore.setSubscribed(it, channel, false) } ?: return
+        localSubscriptions.clear(); localSubscriptions.addAll(stored)
         if (activeAccountId == null) { subscriptions.clear(); subscriptions.addAll(localSubscriptions) }
-        save()
     }
     fun toggleSubscription(video: Video) {
         val channel = video.channel
@@ -1028,7 +1025,7 @@ class HomeModel : ViewModel() {
                             }
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
-                        } catch (e: Exception) {
+                        } catch (e: Exception) { logFailure("loadSubscriptions failed", e);
                             failures.add("$host: ${e.localizedMessage ?: channelError.localizedMessage ?: "request failed"}")
                             emptyList()
                         }
@@ -1077,7 +1074,7 @@ class HomeModel : ViewModel() {
             }
         }
     }
-    fun load(search: String? = null) { viewModelScope.launch { try { error = null; videos = ApiFactory.create(server).videos(search = search?.let(::countrySearchTerm), languageOneOf = contentLanguage()).data; if (search == null && recommendations.isEmpty()) publishAndroidTvRecommendations(videos) } catch (e: Exception) { error = message(R.string.error_server, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) } } }
+    fun load(search: String? = null) { viewModelScope.launch { try { error = null; videos = ApiFactory.create(server).videos(search = search?.let(::countrySearchTerm), languageOneOf = contentLanguage()).data; if (search == null && recommendations.isEmpty()) publishAndroidTvRecommendations(videos) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("load failed", e); error = message(R.string.error_server, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) } } }
     fun loadPopular() {
         val requestId = ++popularRequestId
         val requestedServer = server
@@ -1090,7 +1087,7 @@ class HomeModel : ViewModel() {
                     popularVideos = result
                     popularVideosServer = requestedServer
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadPopular failed", e);
                 if (requestId == popularRequestId) error = message(R.string.error_server, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
                 if (requestId == popularRequestId) isLoadingPopular = false
@@ -1142,7 +1139,7 @@ class HomeModel : ViewModel() {
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (e: Exception) { logFailure("loadLive failed", e);
                 error = message(R.string.error_live, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
                 if (requestId == liveLoadRequestId) isLoadingLive = false
@@ -1256,7 +1253,7 @@ class HomeModel : ViewModel() {
                     if (outcome.errors.isEmpty() || result.isNotEmpty()) prefs?.edit()?.putString("lastSearchQuery", search)?.putString("lastSearchVideos", PeerTubeGson.instance.toJson(videos.take(100)))?.apply()
                     if (result.isEmpty() && outcome.errors.isNotEmpty()) error = "${outcome.errors.size} search source(s) failed: ${outcome.errors.entries.joinToString { "${it.key.key}: ${it.value}" }}"
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("searchSepia failed", e);
                 if (requestId == sepiaSearchRequestId) error = message(R.string.error_sepia, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally { if (requestId == sepiaSearchRequestId) { isSearching = false; isVerifyingAvailability = false } }
         }
@@ -1272,7 +1269,7 @@ class HomeModel : ViewModel() {
             try {
                 error = null
                 channelVideos = ApiFactory.create(serverUrl).channelVideos("$name@$normalizedHost").data
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadChannelVideos failed", e);
                 error = message(R.string.error_server, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             }
         }
@@ -1322,7 +1319,7 @@ class HomeModel : ViewModel() {
                     }
                     if (batchIndex < countBatches.lastIndex) delay(1_300L)
                 }
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadServerChannels failed", e);
                 error = message(R.string.error_server, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
                 isLoadingServerChannels = false
@@ -1352,7 +1349,7 @@ class HomeModel : ViewModel() {
                     apiStatus = "unknown", totalVideos = instance.totalVideos
                 ) })
                 discoveredServers = serverRepository?.all().orEmpty()
-            } catch (e: Exception) {
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadInstances failed", e);
                 error = message(R.string.error_directory, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty())
             } finally {
                 isLoadingInstances = false
@@ -1370,7 +1367,8 @@ class HomeModel : ViewModel() {
                     if (name.isBlank() || !host.matches(Regex("(?i)[a-z0-9.-]{1,253}"))) return@withPermit emptyList()
                     try { ApiFactory.create("https://$host").channelVideos("$name@$host", count = 30).data }
                     catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                    catch (_: Exception) {
+                    catch (error: Exception) {
+                        logFailure("Channel lookup failed, falling back to search", error)
                         runCatching { ApiFactory.create("https://$host").videos(search = name, count = 30).data.filter { v ->
                             (v.channel?.name ?: v.account?.name).equals(name, true) &&
                                 (v.channel?.host ?: v.account?.host ?: v.host.orEmpty()).equals(host, true)
@@ -1419,7 +1417,7 @@ class HomeModel : ViewModel() {
                     tagScore + titleScore + channelScore + countryBonus
                 }
                 if (recommendations.isNotEmpty()) publishAndroidTvRecommendations(recommendations)
-            } catch (e: Exception) { error = message(R.string.error_recommendations, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadRecommendations failed", e); error = message(R.string.error_recommendations, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) }
             finally { isLoadingRecommendations = false }
         }
     }

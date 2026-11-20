@@ -33,17 +33,20 @@ import javax.crypto.spec.GCMParameterSpec
 import java.security.KeyStore
 
 internal class AccountAuthFailure(val reason: String, val status: Int = 0, cause: Throwable? = null) : java.io.IOException(reason, cause)
+@androidx.annotation.Keep
 internal data class AccountOAuthClient(
     @field:SerializedName(value = "id", alternate = ["a"]) val id: String,
     @field:SerializedName(value = "secret", alternate = ["b"]) val secret: String
 ) { override fun toString() = "AccountOAuthClient(redacted)" }
 internal data class AccountOAuthTokens(val access: String, val refresh: String, val expiresIn: Long) { override fun toString() = "AccountOAuthTokens(redacted)" }
+@androidx.annotation.Keep
 internal data class AccountProfile(
     @field:SerializedName(value = "userId", alternate = ["a"]) val userId: Long,
     @field:SerializedName(value = "username", alternate = ["b"]) val username: String,
     @field:SerializedName(value = "displayName", alternate = ["c"]) val displayName: String,
     @field:SerializedName(value = "avatar", alternate = ["d"]) val avatar: String?
 )
+@androidx.annotation.Keep
 internal data class AccountSession(
     @field:SerializedName(value = "server", alternate = ["a"]) val server: String,
     @field:SerializedName(value = "client", alternate = ["b"]) val client: AccountOAuthClient,
@@ -56,6 +59,7 @@ internal data class AccountSession(
     val id get() = "$server|${profile.userId}"
     override fun toString() = "AccountSession(server=$server, credentials=redacted)"
 }
+@androidx.annotation.Keep
 internal data class StoredPeerTubeAccounts(
     @field:SerializedName(value = "sessions", alternate = ["a"]) val sessions: List<AccountSession> = emptyList(),
     @field:SerializedName(value = "activeId", alternate = ["b"]) val activeId: String? = null
