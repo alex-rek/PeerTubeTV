@@ -74,4 +74,10 @@ Interface string resources are included for English, Russian, Arabic, German, Sp
 
 ## Project status
 
-This project is under active development. PeerTube servers differ in their API behavior, video formats, and availability. The repository does not currently include a license file.
+This project is under active development. PeerTube servers differ in their API behavior, video formats, and availability.
+
+## License
+
+Copyright 2026 alex-rek. Licensed under the [Apache License 2.0](LICENSE).
+
+Third-party libraries keep their own licenses; Google ML Kit (on-device translation) is used under the Google ML Kit Terms of Service.
