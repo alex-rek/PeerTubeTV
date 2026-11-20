@@ -830,11 +830,7 @@ class HomeModel : ViewModel() {
     }
     fun updateVideoSortMode(mode: String) { videoSortMode = mode.takeIf { it in setOf("newest", "popular", "title") } ?: "newest"; save() }
     fun updateNavigationSounds(enabled: Boolean) { navigationSounds = enabled; save() }
-    fun sortVideos(items: List<Video>): List<Video> = when (videoSortMode) {
-        "popular" -> items.sortedByDescending { it.views }
-        "title" -> items.sortedBy { it.name.lowercase(Locale.ROOT) }
-        else -> items.sortedByDescending { it.publishedAt ?: "" }
-    }
+    fun sortVideos(items: List<Video>): List<Video> = sortVideosBy(videoSortMode, items)
 
     fun syncWatchProgress() {
         watchProgressMs.clear()
@@ -1390,32 +1386,17 @@ class HomeModel : ViewModel() {
                     else -> history.take(30)
                 }
                 if (watched.isEmpty()) { recommendations = emptyList(); return@launch }
-                val stopWords = setOf("the", "and", "for", "with", "from", "this", "that", "как", "что", "это", "для", "или", "при", "про", "видео", "video")
-                val titleTokens = watched.flatMap { it.name.lowercase().split(Regex("[^\\p{L}\\p{N}]+")) }
-                    .filter { it.length >= 3 && it !in stopWords }
-                val tags = watched.flatMap { it.tags.orEmpty() }.map { it.trim() }.filter { it.length >= 2 }
-                val queries = (if (tags.isNotEmpty()) tags else titleTokens)
-                    .groupingBy { it.lowercase() }.eachCount().entries
-                    .sortedByDescending { it.value }.map { it.key }.distinct().take(5)
+                val queries = recommendationQueries(watched)
                 if (queries.isEmpty()) { recommendations = emptyList(); return@launch }
                 val searchApi = ApiFactory.sepiaSearch()
                 val candidates = queries.map { term -> async {
                     runCatching { searchApi.videos(search = countrySearchTerm(term), count = 20, languageOneOf = recommendationContentLanguage()).data }
                         .getOrDefault(emptyList())
                 } }.awaitAll().flatten()
-                    .distinctBy { it.uuid }
-                    .filterNot { candidate -> candidate.uuid in excludedRecommendationIds || (watchedRecommendationThreshold != "never" && candidate.uuid in watchedVideoIds) }
-                val watchedTags = watched.flatMap { it.tags.orEmpty() }.map { it.lowercase() }.toSet()
-                val watchedWords = titleTokens.toSet()
-                recommendations = candidates.sortedByDescending { candidate ->
-                    val tagScore = candidate.tags.orEmpty().count { it.lowercase() in watchedTags } * 4
-                    val titleScore = candidate.name.lowercase().split(Regex("[^\\p{L}\\p{N}]+")).count { it in watchedWords }
-                    val channelScore = if (watched.any { it.channel?.name != null && it.channel.name == candidate.channel?.name }) 1 else 0
-                    val country = searchCountryCode.lowercase(Locale.ROOT)
-                    val host = (candidate.host ?: candidate.channel?.host ?: candidate.account?.host).orEmpty().lowercase(Locale.ROOT)
-                    val countryBonus = if (country.isNotBlank() && host.substringAfterLast('.', "") == country) 2 else 0
-                    tagScore + titleScore + channelScore + countryBonus
-                }
+                recommendations = rankRecommendations(
+                    candidates, watched, excludedIds = excludedRecommendationIds.toSet(), watchedIds = watchedVideoIds.keys.toSet(),
+                    hideWatched = watchedRecommendationThreshold != "never", countryCode = searchCountryCode
+                )
                 if (recommendations.isNotEmpty()) publishAndroidTvRecommendations(recommendations)
             } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { logFailure("loadRecommendations failed", e); error = message(R.string.error_recommendations, e.localizedMessage ?: appContext?.getString(R.string.error_request).orEmpty()) }
             finally { isLoadingRecommendations = false }

@@ -15,7 +15,7 @@ if (hasAnyReleaseSigningValue && !hasAllReleaseSigningValues) {
 android {
     namespace = "app.peertube.tv"
     compileSdk = 37
-    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 36; versionCode = 29; versionName = "1.0.29" }
+    defaultConfig { applicationId = "app.peertube.tv"; minSdk = 23; targetSdk = 36; versionCode = 29; versionName = "1.0.29"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner" }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -85,4 +85,9 @@ dependencies {
     implementation(libs.androidx.profileinstaller)
     baselineProfile(project(":baselineprofile"))
     testImplementation(libs.junit)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
