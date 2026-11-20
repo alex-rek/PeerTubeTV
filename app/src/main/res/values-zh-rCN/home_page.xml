@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="home_content">首页内容</string>
+    <string name="home_mode_recommended">推荐和最新</string>
+    <string name="home_mode_interests">兴趣</string>
+    <string name="home_mode_server">来自服务器的视频</string>
+    <string name="home_mode_channel">来自频道的视频</string>
+    <string name="home_interests_help">选择首页显示的分类。</string>
+    <string name="home_interests_empty">请至少选择一个分类。</string>
+    <string name="home_server_address">PeerTube 服务器 URL</string>
+    <string name="home_server_hint">留空则使用当前选择的服务器。</string>
+    <string name="home_channel_address">频道 URL 或 频道@服务器</string>
+    <string name="home_source_check_save">检查并保存</string>
+    <string name="home_source_saved">来源已检查并保存。</string>
+    <string name="home_source_invalid">无法检查此来源。请检查地址和网络连接。</string>
+    <string name="home_source_empty">此首页来源未找到视频。</string>
+    <string name="home_interest_music">音乐</string>
+    <string name="home_interest_films">电影</string>
+    <string name="home_interest_vehicles">交通工具</string>
+    <string name="home_interest_art">艺术</string>
+    <string name="home_interest_sports">体育</string>
+    <string name="home_interest_travel">旅行</string>
+    <string name="home_interest_gaming">游戏</string>
+    <string name="home_interest_people">人物</string>
+    <string name="home_interest_comedy">喜剧</string>
+    <string name="home_interest_entertainment">娱乐</string>
+    <string name="home_interest_news">新闻</string>
+    <string name="home_interest_howto">教程</string>
+    <string name="home_interest_education">教育</string>
+    <string name="home_interest_activism">社会行动</string>
+    <string name="home_interest_science">科学</string>
+    <string name="home_interest_animals">动物</string>
+    <string name="home_interest_kids">儿童</string>
+    <string name="home_interest_food">美食</string>
+    <string name="home_interest_nature">自然</string>
+</resources>
